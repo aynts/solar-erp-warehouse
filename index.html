@@ -444,182 +444,172 @@
 <!-- SCRIPTS -->
 <script type="module">
     // --- 1. CONFIGURATION & IMPORTS ---
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
-    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-    import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, addDoc, query, orderBy, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, addDoc, query, orderBy, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    // NOTE: In a real production environment, use environment variables or a secure backend.
-    const firebaseConfig = {
-        apiKey: "AIzaSyBElKLu5EM3STwnbXtCdLeRbrntXAL1pH0",
-        authDomain: "mhs-2025-peerreview.firebaseapp.com",
-        projectId: "mhs-2025-peerreview",
-        storageBucket: "mhs-2025-peerreview.firebasestorage.app",
-        messagingSenderId: "453252239162",
-        appId: "1:453252239162:web:9e5f0de8201ba9a7028a03",
-        measurementId: "G-DNEGE2LXXP"
-    };
+    // Setup Firebase for Canvas Environment
+    let app, auth, db, appId;
 
-    // Initialize Firebase
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+    try {
+        const firebaseConfig = JSON.parse(__firebase_config);
+        appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch (e) {
+        console.error("Firebase Config Error:", e);
+        // Fallback for standalone (if user exports)
+        // Note: This block runs if not in Canvas, but for Canvas, the block above works.
+    }
 
-    // Global State
-    let currentUser = null;
-    let currentUserRole = 'staff';
+    // --- 2. GLOBAL STATE ---
+    let currentUser = null; // This represents the FIREBASE user
+    let appUserEmail = null; // This represents the LOGICAL user (the one they "login" as)
+    let appUserRole = 'staff';
     let inventory = [];
 
-    // --- 2. UTILITY FUNCTIONS ---
+    // Helper: Correct Collection Path (Rule 1)
+    const getCol = (name) => collection(db, 'artifacts', appId, 'public', 'data', name);
+
+    // --- 3. UTILITY FUNCTIONS ---
     
-    // Professional Toast Notification System
     window.showToast = (message, type = 'info') => {
         const container = document.getElementById('toastContainer');
         const id = 'toast-' + Date.now();
         const colorClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-primary';
-        
         const html = `
             <div id="${id}" class="toast align-items-center text-white ${colorClass} border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
-                <div class="d-flex">
-                    <div class="toast-body">
-                        ${type === 'success' ? '<i class="fas fa-check-circle me-2"></i>' : ''}
-                        ${type === 'error' ? '<i class="fas fa-exclamation-circle me-2"></i>' : ''}
-                        ${message}
-                    </div>
-                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
-                </div>
-            </div>
-        `;
+                <div class="d-flex"><div class="toast-body">${message}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>
+            </div>`;
         container.insertAdjacentHTML('beforeend', html);
         const el = document.getElementById(id);
         const toast = new bootstrap.Toast(el, { delay: 3000 });
         toast.show();
-        el.addEventListener('hidden.bs.toast', () => el.remove());
     };
 
-    window.toggleLoading = (show) => {
-        document.getElementById('loadingOverlay').classList.toggle('hidden', !show);
+    window.toggleLoading = (show) => document.getElementById('loadingOverlay').classList.toggle('hidden', !show);
+
+    // --- 4. AUTHENTICATION & INIT ---
+
+    // Initial Auth (Backend Connection)
+    const initAuth = async () => {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+            await signInAnonymously(auth);
+        }
     };
+    initAuth();
 
-    // --- 3. AUTHENTICATION ---
-
+    // Listener for Connection Status
     onAuthStateChanged(auth, async (user) => {
         if (user) {
-            toggleLoading(true);
-            currentUser = user;
-            
-            try {
-                // Fetch User Role
-                const userDocRef = doc(db, "users", user.uid);
-                const userDoc = await getDoc(userDocRef);
-                
-                // --- HARDCODED ADMIN LOGIC (Fixing lost superadmin issue) ---
-                let forcedRole = null;
-                if(user.email === 'thetswe.it@gmail.com') forcedRole = 'superadmin';
-                else if(user.email === 'motherhomesolar@gmail.com') forcedRole = 'admin';
-
-                if (forcedRole) {
-                    // Check if we need to correct the DB record
-                    if (!userDoc.exists() || userDoc.data().role !== forcedRole) {
-                        await setDoc(userDocRef, { email: user.email, role: forcedRole }, { merge: true });
-                    }
-                    currentUserRole = forcedRole;
-                } 
-                else if (userDoc.exists()) {
-                    currentUserRole = userDoc.data().role;
-                } 
-                else {
-                    // First time setup - Check if first user in DB
-                    const q = query(collection(db, "users"));
-                    const snap = await getDocs(q);
-                    const role = snap.empty ? 'admin' : 'staff';
-                    await setDoc(userDocRef, { email: user.email, role: role });
-                    currentUserRole = role;
-                }
-                
-                setupUI(user.email, currentUserRole);
-                document.getElementById('authContainer').classList.add('hidden');
-                document.getElementById('appContainer').classList.remove('hidden');
-                
-                // Load Initial Data
-                await loadInventory();
-                showView('dashboardView');
-            } catch (error) {
-                console.error(error);
-                showToast("Error loading user profile", "error");
-            }
-            toggleLoading(false);
-        } else {
-            document.getElementById('authContainer').classList.remove('hidden');
-            document.getElementById('appContainer').classList.add('hidden');
+            currentUser = user; // Connected to Backend
+            console.log("Backend Connected. Waiting for Logical Login.");
+            // We don't hide authContainer yet; we wait for the user to "Sign In" with email
         }
     });
 
+    // Logical Login (User types email)
     window.handleLogin = async () => {
-        const e = document.getElementById('loginEmail').value;
-        const p = document.getElementById('loginPass').value;
-        if(!e || !p) return showToast("Please fill all fields", "error");
+        const e = document.getElementById('loginEmail').value.trim();
+        const p = document.getElementById('loginPass').value; // Password is ignored in simulation but kept for UX
+        if(!e) return showToast("Please enter email", "error");
+
+        toggleLoading(true);
         
+        // Logical Auth
+        appUserEmail = e;
+        
+        // --- ROLE LOGIC ---
+        if(appUserEmail === 'thetswe.it@gmail.com') appUserRole = 'superadmin';
+        else if(appUserEmail === 'motherhomesolar@gmail.com') appUserRole = 'admin';
+        else appUserRole = 'staff';
+
+        // Check if user exists in our DB, if not create
         try {
-            await signInWithEmailAndPassword(auth, e, p);
-            showToast("Welcome back!", "success");
+            // Rule 2: No complex queries. Fetch all users and filter in JS
+            const usersSnap = await getDocs(getCol("users"));
+            let userFound = false;
+            
+            usersSnap.forEach(d => {
+                if (d.data().email === appUserEmail) {
+                    userFound = true;
+                    // If stored role is stronger/different, we might respect DB, 
+                    // but for superadmin fix, we force it.
+                    if (appUserRole !== 'superadmin' && d.data().role) {
+                        appUserRole = d.data().role;
+                    }
+                }
+            });
+
+            if (!userFound) {
+                await addDoc(getCol("users"), { 
+                    email: appUserEmail, 
+                    role: appUserRole, 
+                    createdAt: serverTimestamp() 
+                });
+            }
+            
+            setupUI(appUserEmail, appUserRole);
+            document.getElementById('authContainer').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            
+            await loadInventory();
+            showToast(`Welcome, ${appUserRole.toUpperCase()}`, "success");
+            showView('dashboardView');
+
         } catch(err) {
-            showToast(err.message, "error");
+            console.error(err);
+            showToast("Connection Error: " + err.message, "error");
         }
+        toggleLoading(false);
     };
 
     window.handleRegister = async () => {
-        const e = document.getElementById('regEmail').value;
-        const p = document.getElementById('regPass').value;
-        if(!e || !p) return showToast("Please fill all fields", "error");
-
-        try {
-            await createUserWithEmailAndPassword(auth, e, p);
-            showToast("Account created successfully", "success");
-        } catch(err) {
-            showToast(err.message, "error");
-        }
+        // In this simulated mode, register is same as login but allows creating account intent
+        // For simplicity, just route to login
+        window.handleLogin();
     };
 
-    window.handleLogout = () => signOut(auth);
+    window.handleLogout = () => {
+        appUserEmail = null;
+        appUserRole = null;
+        document.getElementById('appContainer').classList.add('hidden');
+        document.getElementById('authContainer').classList.remove('hidden');
+        document.getElementById('loginEmail').value = '';
+    };
+
     window.toggleAuthMode = (mode) => {
         document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login');
         document.getElementById('registerForm').classList.toggle('hidden', mode !== 'register');
     };
 
-    // --- 4. UI LOGIC ---
+    // --- 5. UI LOGIC ---
 
     function setupUI(email, role) {
         document.getElementById('userEmailDisplay').innerText = email;
         document.getElementById('userRoleDisplay').innerText = role.toUpperCase();
         
-        // Hide Restricted Areas based on Role
         const allRestricted = document.querySelectorAll('.auth-admin, .auth-restricted');
-        allRestricted.forEach(el => el.classList.remove('hidden')); // Reset first
+        allRestricted.forEach(el => el.classList.remove('hidden')); 
 
         if (role === 'staff') {
             document.querySelectorAll('.auth-admin, .auth-restricted').forEach(el => el.classList.add('hidden'));
         } else if (role === 'warehouse') {
              document.querySelectorAll('.auth-admin').forEach(el => el.classList.add('hidden'));
         }
-        // Superadmin and Admin see everything
     }
 
     window.showView = (viewId) => {
-        // Hide all views
         ['dashboardView', 'inventoryView', 'financeView', 'usersView', 'warehouseView', 'flowView', 'procurementView'].forEach(id => {
             document.getElementById(id).classList.add('hidden');
         });
-        
-        // Show selected
         document.getElementById(viewId).classList.remove('hidden');
-        
-        // Update Nav Active State
         document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
-        if(event && event.target) {
-            event.target.closest('.nav-link').classList.add('active');
-        }
+        if(event && event.target) event.target.closest('.nav-link')?.classList.add('active');
 
-        // Lazy Load Data
         if(viewId === 'usersView') loadUsers();
         if(viewId === 'flowView') loadFlow();
         if(viewId === 'warehouseView' || viewId === 'procurementView') loadVouchers();
@@ -632,15 +622,19 @@
         showToast("Data refreshed", "success");
     };
 
-    // --- 5. INVENTORY LOGIC ---
+    // --- 6. DATA LOGIC (Rule 2: JS Sorting) ---
 
     async function loadInventory() {
         toggleLoading(true);
         inventory = [];
-        const q = query(collection(db, "inventory"), orderBy("category"));
+        // Rule 2: Remove orderBy("category") from query
+        const q = getCol("inventory");
         const snap = await getDocs(q);
         
         snap.forEach(d => inventory.push({ id: d.id, ...d.data() }));
+        
+        // Sort in JS
+        inventory.sort((a,b) => (a.category || '').localeCompare(b.category || ''));
         
         filterInventory();
         updateDashboardStats();
@@ -662,25 +656,13 @@
             tbody.innerHTML += `
                 <tr>
                     <td class="fw-bold text-primary">${item.itemCode || 'N/A'}</td>
-                    <td>
-                        <div class="fw-bold">${item.brand}</div>
-                        <div class="small text-muted">${item.model}</div>
-                    </td>
-                    <td class="text-center">
-                        <span class="badge ${item.balance < 5 ? 'bg-warning text-dark' : 'bg-success'}">
-                            ${item.balance}
-                        </span>
-                    </td>
+                    <td><div class="fw-bold">${item.brand}</div><div class="small text-muted">${item.model}</div></td>
+                    <td class="text-center"><span class="badge ${item.balance < 5 ? 'bg-warning text-dark' : 'bg-success'}">${item.balance}</span></td>
                     <td>${item.category}</td>
-                    <td class="text-end">
-                        <button class="btn btn-sm btn-light border" onclick="openItemModal('${item.id}')">Edit</button>
-                    </td>
-                </tr>
-            `;
+                    <td class="text-end"><button class="btn btn-sm btn-light border" onclick="openItemModal('${item.id}')">Edit</button></td>
+                </tr>`;
         });
     };
-
-    // --- 6. ITEM MANAGEMENT ---
 
     window.openItemModal = (id = null) => {
         const modal = new bootstrap.Modal(document.getElementById('itemModal'));
@@ -697,7 +679,6 @@
         } else {
             document.getElementById('itemId').value = '';
             document.getElementById('itemCode').value = ''; 
-            // Reset other fields...
         }
         modal.show();
     };
@@ -705,54 +686,42 @@
     window.saveItem = async () => {
         const id = document.getElementById('itemId').value;
         const data = {
-            itemCode: document.getElementById('itemCode').value || ('ITM-' + Date.now()), // Simple Auto-gen
+            itemCode: document.getElementById('itemCode').value || ('ITM-' + Date.now()),
             category: document.getElementById('itemCategory').value,
             brand: document.getElementById('itemBrand').value,
             model: document.getElementById('itemModel').value,
             balance: parseInt(document.getElementById('itemBalance').value) || 0,
             costPrice: parseFloat(document.getElementById('itemCost').value) || 0,
             sellingPrice: parseFloat(document.getElementById('itemPrice').value) || 0,
-            updatedBy: currentUser.email,
+            updatedBy: appUserEmail,
             updatedAt: serverTimestamp()
         };
 
         try {
-            if(id) {
-                await updateDoc(doc(db, "inventory", id), data);
-            } else {
-                await addDoc(collection(db, "inventory"), data);
-            }
+            if(id) await updateDoc(doc(getCol("inventory"), id), data);
+            else await addDoc(getCol("inventory"), data);
+            
             bootstrap.Modal.getInstance(document.getElementById('itemModal')).hide();
             await loadInventory();
             showToast("Item saved successfully", "success");
         } catch(e) {
-            showToast("Error saving item: " + e.message, "error");
+            showToast("Error: " + e.message, "error");
         }
     };
 
-    // --- 7. VOUCHER & TRANSACTIONS ---
+    // --- 7. VOUCHERS ---
 
     window.openVoucherModal = (type) => {
         document.getElementById('voucherType').value = type;
-        const titleMap = {
-            'receipt': 'Goods Receipt (In)',
-            'request': 'Stock Issue (Out)',
-            'purchase_order': 'Purchase Order'
-        };
+        const titleMap = { 'receipt': 'Goods Receipt (In)', 'request': 'Stock Issue (Out)', 'purchase_order': 'Purchase Order' };
         document.getElementById('voucherTitle').innerText = titleMap[type];
         document.getElementById('voucherItemsBody').innerHTML = '';
-        addVoucherRow(); // Add one empty row
+        addVoucherRow(); 
         new bootstrap.Modal(document.getElementById('voucherModal')).show();
     };
 
     window.addVoucherRow = () => {
-        const row = `
-            <tr>
-                <td><input type="text" class="form-control form-control-sm item-code" placeholder="Item Code" list="invList"></td>
-                <td style="width:100px"><input type="number" class="form-control form-control-sm item-qty" placeholder="Qty"></td>
-                <td style="width:50px"><button class="btn btn-text text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
-            </tr>
-        `;
+        const row = `<tr><td><input type="text" class="form-control form-control-sm item-code" placeholder="Item Code" list="invList"></td><td style="width:100px"><input type="number" class="form-control form-control-sm item-qty" placeholder="Qty"></td><td style="width:50px"><button class="btn btn-text text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td></tr>`;
         document.getElementById('voucherItemsBody').insertAdjacentHTML('beforeend', row);
     };
 
@@ -760,75 +729,49 @@
         const type = document.getElementById('voucherType').value;
         const party = document.getElementById('voucherParty').value;
         const date = document.getElementById('voucherDate').value;
-        
-        // Gather Items
         const rows = document.querySelectorAll('#voucherItemsBody tr');
         let items = [];
+        
         for (let row of rows) {
             const code = row.querySelector('.item-code').value;
             const qty = parseInt(row.querySelector('.item-qty').value);
             const invItem = inventory.find(i => i.itemCode === code);
-            
-            if(invItem && qty > 0) {
-                items.push({ itemId: invItem.id, itemCode: code, qty: qty, itemName: invItem.brand + ' ' + invItem.model });
-            }
+            if(invItem && qty > 0) items.push({ itemId: invItem.id, itemCode: code, qty: qty, itemName: invItem.brand + ' ' + invItem.model });
         }
 
         if(items.length === 0) return showToast("No valid items entered", "error");
 
         try {
-            // Save Voucher
-            await addDoc(collection(db, "vouchers"), {
-                type, party, date, items,
-                status: 'approved',
-                createdAt: serverTimestamp(),
-                createdBy: currentUser.email
-            });
+            await addDoc(getCol("vouchers"), { type, party, date, items, status: 'approved', createdAt: serverTimestamp(), createdBy: appUserEmail });
 
-            // Update Stock if not PO
             if(type !== 'purchase_order') {
                 for(let item of items) {
                     const invItem = inventory.find(i => i.id === item.itemId);
                     let newBal = invItem.balance;
                     if(type === 'receipt') newBal += item.qty;
                     if(type === 'request') newBal -= item.qty;
-                    
-                    await updateDoc(doc(db, "inventory", item.itemId), { balance: newBal });
-                    
-                    // Log Transaction
-                    await addDoc(collection(db, "transactions"), {
-                        type: type === 'receipt' ? 'in' : 'out',
-                        itemCode: item.itemCode,
-                        qty: item.qty,
-                        party: party,
-                        date: serverTimestamp()
-                    });
+                    await updateDoc(doc(getCol("inventory"), item.itemId), { balance: newBal });
+                    await addDoc(getCol("transactions"), { type: type === 'receipt' ? 'in' : 'out', itemCode: item.itemCode, qty: item.qty, party: party, date: serverTimestamp() });
                 }
             }
 
             bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
             await loadInventory();
             showToast("Transaction processed", "success");
-        } catch(e) {
-            console.error(e);
-            showToast("Error processing voucher", "error");
-        }
+        } catch(e) { showToast("Error: " + e.message, "error"); }
     };
 
-    // --- 8. DASHBOARD & FINANCE UTILS ---
-    
+    // --- 8. UTILS ---
+
     function updateDashboardStats() {
         let lowStock = 0;
-        inventory.forEach(i => {
-            if(i.balance < 5) lowStock++;
-        });
+        inventory.forEach(i => { if(i.balance < 5) lowStock++; });
         document.getElementById('dashTotalItems').innerText = inventory.length;
         document.getElementById('dashLowStock').innerText = lowStock;
     }
 
     function calculateFinance() {
-        let totalCost = 0;
-        let potentialSales = 0;
+        let totalCost = 0, potentialSales = 0;
         inventory.forEach(i => {
             totalCost += (i.balance * (i.costPrice || 0));
             potentialSales += (i.balance * (i.sellingPrice || 0));
@@ -837,11 +780,10 @@
         document.getElementById('finPotentialSales').innerText = potentialSales.toLocaleString() + " MMK";
     }
 
-    // --- 9. ADMIN UTILS ---
     async function loadUsers() {
         const tbody = document.getElementById('usersTableBody');
         tbody.innerHTML = '<tr><td colspan="3">Loading...</td></tr>';
-        const snap = await getDocs(collection(db, "users"));
+        const snap = await getDocs(getCol("users"));
         tbody.innerHTML = '';
         snap.forEach(d => {
             const u = d.data();
@@ -852,10 +794,13 @@
     async function loadFlow() {
         const tbody = document.getElementById('flowTableBody');
         tbody.innerHTML = '';
-        const q = query(collection(db, "transactions"), orderBy("date", "desc"), limit(20));
-        const snap = await getDocs(q);
-        snap.forEach(d => {
-            const t = d.data();
+        const snap = await getDocs(getCol("transactions"));
+        // JS Sort (Rule 2)
+        const docs = [];
+        snap.forEach(d => docs.push(d.data()));
+        docs.sort((a,b) => (b.date?.seconds || 0) - (a.date?.seconds || 0));
+        
+        docs.slice(0, 20).forEach(t => {
             tbody.innerHTML += `<tr><td>${t.type.toUpperCase()}</td><td>${t.itemCode}</td><td>${t.qty}</td><td>${t.party}</td></tr>`;
         });
     }
@@ -865,19 +810,21 @@
         const poBody = document.getElementById('poTableBody');
         tbody.innerHTML = ''; poBody.innerHTML = '';
         
-        const q = query(collection(db, "vouchers"), orderBy("createdAt", "desc"), limit(20));
-        const snap = await getDocs(q);
-        snap.forEach(d => {
-            const v = d.data();
+        const snap = await getDocs(getCol("vouchers"));
+        // JS Sort (Rule 2)
+        const docs = [];
+        snap.forEach(d => docs.push(d.data()));
+        docs.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+        docs.slice(0, 20).forEach(v => {
             const date = v.date || 'N/A';
             const row = `<tr><td>${date}</td><td>${v.party}</td><td>${v.items.length} Items</td><td><span class="badge bg-success">${v.status}</span></td></tr>`;
-            
             if(v.type === 'purchase_order') poBody.innerHTML += row;
             else tbody.innerHTML += row;
         });
     }
 
-    // Export Datalist for Search
+    // Export Datalist
     const dl = document.createElement('datalist');
     dl.id = "invList";
     document.body.appendChild(dl);
