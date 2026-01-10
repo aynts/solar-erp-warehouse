@@ -19,6 +19,7 @@
             --primary-color: #0d6efd;
             --secondary-color: #6c757d;
             --success-color: #198754;
+            --info-color: #0dcaf0;
             --bg-light: #f4f7f6;
             --sidebar-bg: #1e293b;
         }
@@ -117,6 +118,7 @@
         .stat-card.warning::after { background-color: #ffc107; }
         .stat-card.success::after { background-color: var(--success-color); }
         .stat-card.danger::after { background-color: #dc3545; }
+        .stat-card.info::after { background-color: var(--info-color); }
 
         .stat-card h2 { font-weight: 700; margin-bottom: 0; color: #1e293b; }
         .stat-card h6 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.5rem; }
@@ -304,6 +306,13 @@
                         <i class="fas fa-tachometer-alt"></i> Dashboard
                     </a>
                 </li>
+                
+                <li class="nav-item auth-finance-access">
+                    <a class="nav-link" onclick="showView('financeView')" id="nav-finance">
+                        <i class="fas fa-chart-line"></i> Finance Overview
+                    </a>
+                </li>
+
                 <li class="nav-item">
                     <a class="nav-link" onclick="showView('inventoryView')" id="nav-inventory">
                         <i class="fas fa-boxes"></i> Inventory
@@ -323,12 +332,12 @@
                 </li>
 
                 <!-- NEW LISTS -->
-                <li class="nav-item auth-procurement-access">
+                <li class="nav-item auth-supplier-access">
                     <a class="nav-link" onclick="showView('suppliersView')" id="nav-suppliers">
                         <i class="fas fa-truck"></i> Suppliers
                     </a>
                 </li>
-                <li class="nav-item auth-warehouse-access">
+                <li class="nav-item auth-customer-access">
                     <a class="nav-link" onclick="showView('customersView')" id="nav-customers">
                         <i class="fas fa-building"></i> Customers
                     </a>
@@ -436,6 +445,53 @@
                 </div>
             </div>
 
+            <!-- FINANCE VIEW (ADDED) -->
+            <div id="financeView" class="hidden">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h3 class="fw-bold text-dark mb-1">Finance Overview</h3>
+                        <p class="text-muted small mb-0">Financial Status & Asset Valuation</p>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadFinanceView()"><i class="fas fa-sync"></i> Refresh</button>
+                </div>
+
+                <div class="row g-4 mb-4">
+                    <div class="col-md-4">
+                        <div class="card p-4 stat-card info h-100">
+                            <h6 class="text-secondary">Total Inventory Asset Value</h6>
+                            <h2 id="finTotalValue" class="display-6 fw-bold text-info">0 MMK</h2>
+                            <small class="text-muted">Calculated on Cost Price</small>
+                        </div>
+                    </div>
+                     <div class="col-md-4">
+                        <div class="card p-4 stat-card success h-100">
+                            <h6 class="text-secondary">Potential Sales Value</h6>
+                            <h2 id="finPotentialSales" class="display-6 fw-bold text-success">0 MMK</h2>
+                             <small class="text-muted">Calculated on Selling Price</small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card p-4 stat-card danger h-100">
+                            <h6 class="text-secondary">Damaged Stock Value</h6>
+                            <h2 id="finDamagedValue" class="display-6 fw-bold text-danger">0 MMK</h2>
+                            <small class="text-muted">Cost of broken items</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h6 class="fw-bold mb-0">High Value Stock Items (Top 10)</h6>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light"><tr><th>Item</th><th>Stock</th><th>Unit Cost</th><th>Total Value</th></tr></thead>
+                            <tbody id="finHighValueTable"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
             <!-- INVENTORY VIEW -->
             <div id="inventoryView" class="hidden">
                 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -480,7 +536,7 @@
                         <div class="col-md-4 auth-price-only text-end">
                             <div class="p-2 bg-success bg-opacity-10 rounded border border-success border-opacity-25">
                                 <span class="text-success fw-bold small">TOTAL VALUE</span>
-                                <div id="totalValueDisplay" class="fw-bold text-success h5 mb-0">$0</div>
+                                <div id="totalValueDisplay" class="fw-bold text-success h5 mb-0">0 MMK</div>
                             </div>
                         </div>
                     </div>
@@ -544,14 +600,14 @@
             <div id="suppliersView" class="hidden">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h3 class="fw-bold">Suppliers List</h3>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="addNewParty('supplier')">
+                    <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('supplier')">
                         <i class="fas fa-plus me-1"></i> Add Supplier
                     </button>
                 </div>
                 <div class="card">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle">
-                            <thead class="table-light"><tr><th>Name</th><th>Type</th><th>Added Date</th></tr></thead>
+                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
                             <tbody id="suppliersTableBody"></tbody>
                         </table>
                     </div>
@@ -562,14 +618,14 @@
             <div id="customersView" class="hidden">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h3 class="fw-bold">Customers & Projects List</h3>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="addNewParty('project')">
+                    <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('project')">
                         <i class="fas fa-plus me-1"></i> Add Customer/Project
                     </button>
                 </div>
                 <div class="card">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle">
-                            <thead class="table-light"><tr><th>Name</th><th>Type</th><th>Added Date</th></tr></thead>
+                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
                             <tbody id="customersTableBody"></tbody>
                         </table>
                     </div>
@@ -1026,11 +1082,11 @@
                     <!-- Price Fields (Protected) -->
                     <div class="col-6 auth-price-only-field">
                         <label class="form-label small fw-bold text-success">COST PRICE</label>
-                        <input type="number" id="itemCost" class="form-control border-success border-opacity-25" step="0.01">
+                        <input type="number" id="itemCost" class="form-control border-success border-opacity-25">
                     </div>
                     <div class="col-6 auth-price-only-field">
                         <label class="form-label small fw-bold text-primary">SELLING PRICE</label>
-                        <input type="number" id="itemPrice" class="form-control border-primary border-opacity-25" step="0.01">
+                        <input type="number" id="itemPrice" class="form-control border-primary border-opacity-25">
                     </div>
                     
                     <div class="col-12">
@@ -1059,6 +1115,38 @@
             <div class="modal-footer border-top-0 pt-0">
                 <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary px-4" onclick="saveItem()">Save Item</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PARTY MODAL (Edit Supplier/Customer) -->
+<div class="modal fade" id="partyModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header border-bottom-0 pb-0">
+                <h5 class="modal-title fw-bold" id="partyModalTitle">Manage Party</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="partyId">
+                <input type="hidden" id="partyType">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">NAME / COMPANY</label>
+                    <input type="text" id="partyName" class="form-control" placeholder="Enter Name">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">CONTACT INFO</label>
+                    <input type="text" id="partyContact" class="form-control" placeholder="Phone / Email">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">ADDRESS</label>
+                    <textarea id="partyAddress" class="form-control" rows="2" placeholder="Full Address"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer border-top-0 pt-0">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary px-4" onclick="saveParty()">Save Details</button>
             </div>
         </div>
     </div>
@@ -1482,6 +1570,7 @@
                 window.loadFlow = loadFlow;
                 window.loadDashboard = loadDashboard;
                 window.loadProjectUsage = loadProjectUsage;
+                window.loadFinanceView = loadFinanceView; // New
                 window.filterInvByCat = filterInvByCat;
                 window.setCategoryTab = setCategoryTab;
                 window.generateNextCode = generateNextCode; 
@@ -1499,6 +1588,11 @@
                 window.addNewParty = addNewParty; // Standard function
                 window.generateDemoData = generateDemoData; // New demo function
                 
+                window.openPartyModal = openPartyModal;
+                window.saveParty = saveParty;
+                window.viewPartyHistory = viewPartyHistory;
+                window.printProjectVoucher = printProjectVoucher;
+
                 // --- QR INTEGRATION ---
                 window.generateQR = generateQR;
                 window.printSingleQRCode = printSingleQRCode;
@@ -1592,10 +1686,11 @@
         
         const isProcurement = role === 'procurement' || isAdmin;
         const isWarehouse = role === 'warehouse' || isAdmin;
-        const isAccountant = role === 'accountant' || isAdmin;
+        const isFinance = role === 'finance' || isAdmin;
+        const isAccountant = role === 'accountant' || isAdmin; // Legacy
         
         // Hide all special navs first
-        document.querySelectorAll('.auth-admin-only, .auth-procurement-access, .auth-warehouse-access, .auth-restricted-flow, .auth-create-only, .auth-price-only, .auth-superadmin-only').forEach(el => el.classList.add('hidden'));
+        document.querySelectorAll('.auth-admin-only, .auth-finance-access, .auth-procurement-access, .auth-warehouse-access, .auth-restricted-flow, .auth-create-only, .auth-price-only, .auth-superadmin-only, .auth-supplier-access, .auth-customer-access').forEach(el => el.classList.add('hidden'));
 
         // SuperAdmin Access
         if (isSuperAdmin) {
@@ -1618,23 +1713,34 @@
             document.querySelectorAll('.auth-warehouse-access').forEach(el => el.classList.remove('hidden'));
         }
 
-        // Flow Access (Warehouse + Admin + Accountant)
-        if (isWarehouse || isAccountant) {
+        // Flow Access (Warehouse + Admin + Accountant + Finance)
+        if (isWarehouse || isFinance || isAccountant) {
             document.querySelectorAll('.auth-restricted-flow').forEach(el => el.classList.remove('hidden'));
         }
 
-        // Price Access
-        if (isAccountant) {
+        // Price & Finance Access
+        if (isFinance || isAccountant) {
             document.querySelectorAll('.auth-price-only').forEach(el => el.classList.remove('hidden'));
+            document.querySelectorAll('.auth-finance-access').forEach(el => el.classList.remove('hidden'));
             document.querySelectorAll('.auth-price-only-field').forEach(el => el.style.display = 'block'); 
         } else {
             document.querySelectorAll('.auth-price-only-field').forEach(el => el.style.display = 'none');
+        }
+
+        // Supplier Access (Procurement, Warehouse, Finance)
+        if (isProcurement || isWarehouse || isFinance) {
+            document.querySelectorAll('.auth-supplier-access').forEach(el => el.classList.remove('hidden'));
+        }
+
+        // Customer Access (Warehouse, Finance)
+        if (isWarehouse || isFinance) {
+            document.querySelectorAll('.auth-customer-access').forEach(el => el.classList.remove('hidden'));
         }
     }
 
     // --- VIEW LOGIC ---
     window.showView = (viewId) => {
-        ['inventoryView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView'].forEach(id => {
+        ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView'].forEach(id => {
             const el = document.getElementById(id);
             if(el) el.classList.add('hidden');
         });
@@ -1644,6 +1750,7 @@
         
         // Map view to nav ID for active state
         if(viewId === 'dashboardView') document.getElementById('nav-dashboard').classList.add('active');
+        if(viewId === 'financeView') document.getElementById('nav-finance').classList.add('active');
         if(viewId === 'inventoryView') document.getElementById('nav-inventory').classList.add('active');
         if(viewId === 'procurementView') document.getElementById('nav-procure').classList.add('active');
         if(viewId === 'warehouseView') document.getElementById('nav-warehouse').classList.add('active');
@@ -1654,6 +1761,7 @@
         if(viewId === 'customersView') document.getElementById('nav-customers').classList.add('active');
 
         if (viewId === 'dashboardView') loadDashboard();
+        if (viewId === 'financeView') loadFinanceView();
         // Pass FALSE to prevent re-fetching if data exists
         if (viewId === 'inventoryView') loadInventory(false);
         if (viewId === 'procurementView' || viewId === 'warehouseView') loadVouchers();
@@ -1662,6 +1770,38 @@
         if (viewId === 'usersView') loadUsers();
         if (viewId === 'suppliersView') loadPartiesView('supplier');
         if (viewId === 'customersView') loadPartiesView('project');
+    }
+
+    // --- FINANCE LOGIC (New) ---
+    window.loadFinanceView = () => {
+        let totalAsset = 0;
+        let potentialSales = 0;
+        let damagedValue = 0;
+        let sortedStock = [...inventory];
+
+        sortedStock.forEach(i => {
+            const cost = Math.round(i.costPrice || 0);
+            const price = Math.round(i.sellingPrice || 0);
+            totalAsset += (i.balance * cost);
+            potentialSales += (i.balance * price);
+            damagedValue += ((i.damagedBalance || 0) * cost);
+        });
+
+        const formatMoney = (num) => Math.round(num).toLocaleString();
+
+        document.getElementById('finTotalValue').innerText = `${formatMoney(totalAsset)} MMK`;
+        document.getElementById('finPotentialSales').innerText = `${formatMoney(potentialSales)} MMK`;
+        document.getElementById('finDamagedValue').innerText = `${formatMoney(damagedValue)} MMK`;
+
+        // Top 10 High Value Items
+        sortedStock.sort((a,b) => ((b.balance * (b.costPrice||0)) - (a.balance * (a.costPrice||0))));
+        const tbody = document.getElementById('finHighValueTable');
+        tbody.innerHTML = '';
+        sortedStock.slice(0,10).forEach(i => {
+            const cost = Math.round(i.costPrice || 0);
+            const total = Math.round(i.balance * cost);
+            tbody.innerHTML += `<tr><td>${i.brand} ${i.model}</td><td>${i.balance}</td><td>${formatMoney(cost)}</td><td class="fw-bold">${formatMoney(total)} MMK</td></tr>`;
+        });
     }
 
     // --- PARTY MANAGEMENT (Suppliers & Projects) ---
@@ -1699,32 +1839,77 @@
         
         filtered.forEach(p => {
             const date = p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : '-';
+            const contact = p.contact || '-';
+            const actions = `
+                <button class="btn btn-sm btn-outline-primary me-1" onclick="openPartyModal('${p.type}', '${p.id}')">Edit</button>
+                <button class="btn btn-sm btn-outline-info" onclick="viewPartyHistory('${p.name}')">View</button>
+            `;
             tbody.innerHTML += `
                 <tr>
                     <td class="fw-bold">${p.name}</td>
-                    <td><span class="badge bg-light text-secondary border">${p.type.toUpperCase()}</span></td>
+                    <td>${contact}</td>
                     <td>${date}</td>
+                    <td class="text-end">${actions}</td>
                 </tr>
             `;
         });
     }
 
-    // Add New Party from View
-    window.addNewParty = async (type) => {
-        const name = prompt(`Enter New ${type.toUpperCase()} Name:`);
-        if(name && name.trim()) {
-             if(parties.some(p => p.name.toLowerCase() === name.toLowerCase())) {
-                 return alert("Name already exists.");
-             }
-             
-             await addDoc(collection(db, "parties"), {
-                 name: name.trim(),
-                 type: type,
-                 createdAt: serverTimestamp()
-             });
-             await loadParties(); // Refresh data
-             loadPartiesView(type); // Refresh UI
+    // Add New Party from View (Replaced by Modal Trigger)
+    window.addNewParty = (type) => {
+        openPartyModal(type);
+    }
+
+    window.openPartyModal = (type, id = null) => {
+        const modal = new bootstrap.Modal(document.getElementById('partyModal'));
+        document.getElementById('partyType').value = type;
+        document.getElementById('partyId').value = id || '';
+        
+        if(id) {
+            const p = parties.find(x => x.id === id);
+            document.getElementById('partyName').value = p.name;
+            document.getElementById('partyContact').value = p.contact || '';
+            document.getElementById('partyAddress').value = p.address || '';
+            document.getElementById('partyModalTitle').innerText = `Edit ${type === 'supplier' ? 'Supplier' : 'Customer'}`;
+        } else {
+            document.getElementById('partyName').value = '';
+            document.getElementById('partyContact').value = '';
+            document.getElementById('partyAddress').value = '';
+            document.getElementById('partyModalTitle').innerText = `Add New ${type === 'supplier' ? 'Supplier' : 'Customer'}`;
         }
+        modal.show();
+    }
+
+    window.saveParty = async () => {
+        const id = document.getElementById('partyId').value;
+        const type = document.getElementById('partyType').value;
+        const name = document.getElementById('partyName').value;
+        const contact = document.getElementById('partyContact').value;
+        const address = document.getElementById('partyAddress').value;
+
+        if(!name) return alert("Name is required");
+
+        const data = { name, contact, address, type };
+
+        if(id) {
+            await updateDoc(doc(db, "parties", id), data);
+        } else {
+            if(parties.some(p => p.name.toLowerCase() === name.toLowerCase())) return alert("Name already exists");
+            await addDoc(collection(db, "parties"), { ...data, createdAt: serverTimestamp() });
+        }
+        
+        bootstrap.Modal.getInstance(document.getElementById('partyModal')).hide();
+        await loadParties();
+        loadPartiesView(type);
+    }
+
+    window.viewPartyHistory = (name) => {
+        // Just switch to flow view, maybe implement filtering later
+        showView('flowView');
+        // Simple client-side filter simulation if needed, or just let user search
+        // For now, alerting user to use search in flow view or implementing a basic filter
+        alert(`Viewing history for ${name}. (Please filter table manually if needed)`);
+        // Ideal: document.getElementById('flowSearch').value = name; filterFlow();
     }
 
     window.quickAddParty = async () => {
@@ -1733,21 +1918,7 @@
         let partyType = 'project'; // default
         if(type === 'receipt' || type === 'purchase_order') partyType = 'supplier';
         
-        const name = prompt(`Enter new ${partyType.toUpperCase()} Name:`);
-        if(name && name.trim()) {
-             // Check duplicates
-             if(parties.some(p => p.name.toLowerCase() === name.toLowerCase())) {
-                 return alert("Name already exists in list.");
-             }
-             
-             await addDoc(collection(db, "parties"), {
-                 name: name.trim(),
-                 type: partyType,
-                 createdAt: serverTimestamp()
-             });
-             await loadParties(); // Refresh lists
-             document.getElementById('voucherParty').value = name.trim(); // Set input
-        }
+        openPartyModal(partyType);
     }
 
     // --- UNIQUE CODE GENERATOR & DYNAMIC FIELDS ---
@@ -1933,17 +2104,21 @@
             return matchSearch && matchCat;
         });
 
-        const isAccountant = (currentUserRole === 'admin' || currentUserRole === 'accountant' || currentUserRole === 'superadmin');
+        const isAccountant = (currentUserRole === 'admin' || currentUserRole === 'accountant' || currentUserRole === 'superadmin' || currentUserRole === 'finance');
         const tbody = document.getElementById('inventoryTableBody');
         tbody.innerHTML = '';
 
         let totalVal = 0;
         let totalQty = 0;
 
+        // Currency Formatting Helper
+        const formatMoney = (num) => Math.round(num).toLocaleString();
+
         filtered.forEach(item => {
             const cost = isAccountant ? (item.costPrice || 0) : 0;
             const price = isAccountant ? (item.sellingPrice || 0) : 0;
-            const priceCells = isAccountant ? `<td>${cost}</td><td>${price}</td>` : '<td class="hidden"></td><td class="hidden"></td>';
+            // No $ symbol, No decimals, With comma
+            const priceCells = isAccountant ? `<td>${formatMoney(cost)}</td><td>${formatMoney(price)}</td>` : '<td class="hidden"></td><td class="hidden"></td>';
             const bal = item.balance || 0;
 
             // Aggregate totals for the filtered view
@@ -1984,8 +2159,9 @@
         });
 
         // Update Total Value Display based on filtered items
+        // No $, Add MMK, No decimals, Comma separated
         const valDisplay = document.getElementById('totalValueDisplay');
-        if(valDisplay) valDisplay.innerText = `$${totalVal.toLocaleString()}`;
+        if(valDisplay) valDisplay.innerText = `${formatMoney(totalVal)} MMK`;
 
         // Show "Found X items" help text
         const helpEl = document.getElementById('searchResultHelp');
@@ -2120,8 +2296,9 @@
             unit: document.getElementById('itemUnit').value,
             balance: parseFloat(document.getElementById('itemBalance').value) || 0,
             remark: document.getElementById('itemRemark').value,
-            costPrice: parseFloat(document.getElementById('itemCost').value) || 0,
-            sellingPrice: parseFloat(document.getElementById('itemPrice').value) || 0,
+            // Ensure integer storage for money values
+            costPrice: Math.round(parseFloat(document.getElementById('itemCost').value)) || 0,
+            sellingPrice: Math.round(parseFloat(document.getElementById('itemPrice').value)) || 0,
             updatedBy: currentUser.email
         };
 
@@ -2208,7 +2385,7 @@
             { 
                 cat: "DC Accessories", brand: "Suntree", model: "SR-63", code: "DCC-SUN-001", 
                 specStr: "63A, DC Breaker", 
-                specs: {spec_amp: "63A", spec_type: "DC MCB 2P"} 
+                specs: {spec_amp: "63A", spec_type: "DC Fuse"} 
             },
             // 11. Breaker Box
             { 
@@ -2256,8 +2433,8 @@
                     unit: "Pcs",
                     balance: 10, 
                     damagedBalance: 0,
-                    costPrice: 100,
-                    sellingPrice: 120,
+                    costPrice: 100, // Int
+                    sellingPrice: 120, // Int
                     remark: "Example Item",
                     createdAt: serverTimestamp()
                 });
@@ -2430,7 +2607,7 @@
         const row = `
             <tr>
                 <td><input type="text" class="form-control form-control-sm item-search bg-white" list="inventoryList" placeholder="Search Item Code" value="${itemVal}"></td>
-                <td><input type="number" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}"></td>
+                <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}" oninput="this.value = Math.abs(this.value)"></td>
                 <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
             </tr>
         `;
@@ -2448,7 +2625,15 @@
         let items = [];
         for(let row of rows) {
             const code = row.querySelector('.item-search').value;
-            const qty = parseInt(row.querySelector('.qty-input').value);
+            const qtyInput = row.querySelector('.qty-input');
+            const qty = parseInt(qtyInput.value);
+            
+            // Negative Check
+            if(qty <= 0 || isNaN(qty)) {
+                qtyInput.style.border = "1px solid red";
+                return alert("Quantity must be a positive number.");
+            }
+
             const item = inventory.find(i => i.itemCode === code);
             
             if(item && qty > 0) {
@@ -2462,6 +2647,43 @@
         }
 
         if(items.length === 0) return alert("No valid items selected");
+
+        // --- PO VALIDATION LOGIC ---
+        if(relatedPoId && type === 'receipt') {
+            toggleLoading(true);
+            try {
+                const poDoc = await getDoc(doc(db, "vouchers", relatedPoId));
+                const po = poDoc.data();
+                
+                // Get history
+                const q = query(collection(db, "vouchers"), where("relatedPoId", "==", relatedPoId), where("type", "==", "receipt"));
+                const snap = await getDocs(q);
+                let receivedMap = {};
+                snap.forEach(d => {
+                    d.data().items.forEach(i => { receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty; });
+                });
+
+                // Check Limits
+                for(let newItem of items) {
+                    const orderedItem = po.items.find(pi => pi.itemCode === newItem.itemCode);
+                    if(orderedItem) {
+                        const alreadyReceived = receivedMap[newItem.itemCode] || 0;
+                        const allowed = orderedItem.qty - alreadyReceived;
+                        
+                        if(newItem.qty > allowed) {
+                            toggleLoading(false);
+                            return alert(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nReceived: ${alreadyReceived}\nRemaining Allowed: ${allowed}\nYou tried to add: ${newItem.qty}`);
+                        }
+                    }
+                }
+            } catch(e) {
+                console.error("PO Validation Error", e);
+                toggleLoading(false);
+                return alert("Error validating PO limit. Check console.");
+            }
+            toggleLoading(false);
+        }
+        // ---------------------------
 
         let status = 'draft';
         if (type === 'purchase_order') status = 'ordered'; 
@@ -2537,9 +2759,38 @@
     // New Function: Receive PO (Convert to Receipt)
     window.receivePO = async (poId) => {
         try {
+            toggleLoading(true);
             const poDoc = await getDoc(doc(db, "vouchers", poId));
-            if(!poDoc.exists()) return;
+            if(!poDoc.exists()) { toggleLoading(false); return; }
             const po = poDoc.data();
+
+            // Fetch previous receipts for this PO to calculate remaining balance
+            const q = query(collection(db, "vouchers"), where("relatedPoId", "==", poId), where("type", "==", "receipt"));
+            const snap = await getDocs(q);
+            let receivedMap = {};
+            snap.forEach(d => {
+                d.data().items.forEach(i => {
+                    receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty;
+                });
+            });
+
+            const itemsToReceive = [];
+            let allFullyReceived = true;
+
+            // Only add items that have remaining balance
+            po.items.forEach(item => {
+                const alreadyReceived = receivedMap[item.itemCode] || 0;
+                const balance = item.qty - alreadyReceived;
+                if(balance > 0) {
+                    itemsToReceive.push({ ...item, qty: balance }); // Suggest balance qty
+                    allFullyReceived = false;
+                }
+            });
+
+            if(allFullyReceived) {
+                toggleLoading(false);
+                return alert("This PO is already fully received! (ဤ PO အတွက် ပစ္စည်းများအားလုံး လက်ခံရရှိပြီးဖြစ်ပါသည်)");
+            }
             
             openVoucherModal('receipt'); 
             
@@ -2548,11 +2799,15 @@
             document.getElementById('relatedPoId').value = poId; 
             
             document.getElementById('voucherItemsBody').innerHTML = ''; 
-            po.items.forEach(item => {
+            itemsToReceive.forEach(item => {
                 addVoucherItemRow(item);
             });
+            toggleLoading(false);
             
-        } catch(e) { console.error(e); }
+        } catch(e) { 
+            console.error(e); 
+            toggleLoading(false);
+        }
     }
 
     // New Function: Compare PO vs Receipts
@@ -2800,6 +3055,134 @@
         
         new bootstrap.Modal(document.getElementById('printModal')).show();
     }
+    
+    // NEW: Print Project Usage Voucher for Finance
+    window.printProjectVoucher = async (projectName) => {
+        toggleLoading(true);
+        try {
+            const q = query(collection(db, "transactions"), where("party", "==", projectName));
+            const snap = await getDocs(q);
+            
+            const usageMap = {}; // itemCode -> { name, sent, returned, damaged }
+            
+            snap.forEach(d => {
+                const t = d.data();
+                if(!t.itemId) return;
+                
+                if(!usageMap[t.itemId]) {
+                    usageMap[t.itemId] = { 
+                        code: t.itemId, // temp, will fetch real code if needed or use local inventory
+                        name: t.itemName || 'Unknown Item',
+                        sent: 0,
+                        returned: 0,
+                        damaged: 0
+                    };
+                }
+                
+                if(t.type === 'out') usageMap[t.itemId].sent += t.qty;
+                if(t.type === 'in' && t.subType === 'return') usageMap[t.itemId].returned += t.qty;
+                if(t.type === 'in' && t.subType === 'damage_return') usageMap[t.itemId].damaged += t.qty;
+            });
+            
+            // Enrich with Inventory Code if possible (from local cache)
+            const rows = [];
+            for (const [id, data] of Object.entries(usageMap)) {
+                const invItem = inventory.find(i => i.id === id);
+                const code = invItem ? invItem.itemCode : 'N/A';
+                const unit = invItem ? (invItem.unit || 'Pcs') : 'Pcs';
+                const netUsed = data.sent - data.returned; // Standard Net Usage Calculation
+                
+                if (data.sent > 0 || data.returned > 0 || data.damaged > 0) {
+                    rows.push({ ...data, code, unit, netUsed });
+                }
+            }
+            
+            // Generate HTML
+            const printWindow = window.open('', '', 'height=600,width=800');
+            printWindow.document.write('<html><head><title>Project Usage Invoice</title>');
+            printWindow.document.write('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">');
+            printWindow.document.write('<style>body{padding: 20px; font-family: sans-serif;} .header{border-bottom: 2px solid #333; margin-bottom: 20px; padding-bottom: 10px;}</style>');
+            printWindow.document.write('</head><body>');
+            
+            printWindow.document.write(`
+                <div class="container">
+                    <div class="header d-flex justify-content-between align-items-center">
+                        <div>
+                            <h4 class="fw-bold text-primary mb-0">Mother Home Solar Co., Ltd.</h4>
+                            <small class="text-muted">Project Usage Summary (Invoice Attachment)</small>
+                        </div>
+                        <div class="text-end">
+                            <h3 class="fw-bold mb-0">PROJECT VOUCHER</h3>
+                            <p class="mb-0">Date: ${new Date().toLocaleDateString()}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4 p-3 bg-light rounded border">
+                        <h5 class="mb-1">Project Name: <strong>${projectName}</strong></h5>
+                        <p class="mb-0 text-muted small">This document lists total items sent, returned, and net consumed quantity for billing.</p>
+                    </div>
+
+                    <table class="table table-bordered table-striped align-middle">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Item Code</th>
+                                <th>Description</th>
+                                <th class="text-center">Total Sent</th>
+                                <th class="text-center">Returned (Good)</th>
+                                <th class="text-center bg-primary bg-opacity-25 text-dark fw-bold">Net Usage (Billable)</th>
+                                <th class="text-center text-danger">Damaged</th>
+                                <th class="text-center">Unit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `);
+            
+            rows.forEach(r => {
+                printWindow.document.write(`
+                    <tr>
+                        <td>${r.code}</td>
+                        <td>${r.name}</td>
+                        <td class="text-center">${r.sent}</td>
+                        <td class="text-center">${r.returned}</td>
+                        <td class="text-center fw-bold bg-primary bg-opacity-10">${r.netUsed}</td>
+                        <td class="text-center text-danger">${r.damaged > 0 ? r.damaged : '-'}</td>
+                        <td class="text-center small text-muted">${r.unit}</td>
+                    </tr>
+                `);
+            });
+            
+            printWindow.document.write(`
+                        </tbody>
+                    </table>
+                    
+                    <div class="row mt-5 pt-4">
+                        <div class="col-6 text-center">
+                            <div class="border-top border-dark pt-2 w-75 mx-auto">
+                                <strong>Warehouse Manager</strong><br>
+                                <small class="text-muted">Verified By</small>
+                            </div>
+                        </div>
+                        <div class="col-6 text-center">
+                            <div class="border-top border-dark pt-2 w-75 mx-auto">
+                                <strong>Project Manager / Finance</strong><br>
+                                <small class="text-muted">Approved By</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `);
+            
+            printWindow.document.write('</body></html>');
+            printWindow.document.close();
+            // Wait for styles to load then print
+            setTimeout(() => { printWindow.print(); }, 1000);
+            
+        } catch(e) {
+            console.error(e);
+            alert("Error generating project voucher.");
+        }
+        toggleLoading(false);
+    }
 
     window.printDiv = (divId) => {
         var printContents = document.getElementById(divId).innerHTML;
@@ -2874,7 +3257,7 @@
         toggleLoading(true);
         
         const printPerUnit = document.getElementById('printAllUnits').checked;
-        const baseUrl = "https://mhinventorysys.thetswe-it-4e9.workers.dev"; // Optional scanning URL base
+        const baseUrl = "https://erp-inv.ayntscfdev.workers.dev/"; // Optional scanning URL base
 
         const generateQR = (text) => {
             return new Promise((resolve) => {
@@ -2951,9 +3334,9 @@
         let csv = ["Item Code,Category,Brand,Model,Specifications,Qty,Unit Cost,Total Asset Value"];
         inventory.forEach(item => {
             const specs = item.specs ? Object.values(item.specs).join("; ") : (item.spec || "");
-            const cost = item.costPrice || 0;
+            const cost = Math.round(item.costPrice || 0);
             const qty = item.balance || 0;
-            const total = (cost * qty).toFixed(2);
+            const total = Math.round(cost * qty);
             csv.push([`"${item.itemCode}"`,`"${item.category}"`,`"${item.brand}"`,`"${item.model}"`,`"${specs}"`,qty,cost,total].join(","));
         });
         const csvFile = new Blob([csv.join("\n")], { type: "text/csv" });
@@ -3106,7 +3489,10 @@
                 : '<span class="badge bg-primary">Active</span>';
             
             const actionBtn = d.status === 'completed'
-                ? `<button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('${proj}', 'active')">Re-open</button>`
+                ? `
+                    <button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('${proj}', 'active')">Re-open</button>
+                    <button class="btn btn-sm btn-outline-primary ms-1" onclick="printProjectVoucher('${proj}')" title="Print Usage Voucher"><i class="fas fa-file-invoice"></i></button>
+                  `
                 : `<button class="btn btn-sm btn-outline-success" onclick="toggleProjectStatus('${proj}', 'completed')">Mark Complete</button>`;
 
             tbody.innerHTML += `
@@ -3149,7 +3535,7 @@
         tbody.innerHTML = '';
         snap.forEach(d => {
             const u = d.data();
-            const roleOptions = ['staff', 'admin', 'procurement', 'warehouse', 'superadmin'].map(r => 
+            const roleOptions = ['staff', 'admin', 'procurement', 'warehouse', 'finance', 'superadmin'].map(r => 
                 `<option value="${r}" ${u.role === r ? 'selected' : ''}>${r.toUpperCase()}</option>`
             ).join('');
 
