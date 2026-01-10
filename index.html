@@ -509,15 +509,30 @@
             
             try {
                 // Fetch User Role
-                const userDoc = await getDoc(doc(db, "users", user.uid));
-                if (userDoc.exists()) {
+                const userDocRef = doc(db, "users", user.uid);
+                const userDoc = await getDoc(userDocRef);
+                
+                // --- HARDCODED ADMIN LOGIC (Fixing lost superadmin issue) ---
+                let forcedRole = null;
+                if(user.email === 'thetswe.it@gmail.com') forcedRole = 'superadmin';
+                else if(user.email === 'motherhomesolar@gmail.com') forcedRole = 'admin';
+
+                if (forcedRole) {
+                    // Check if we need to correct the DB record
+                    if (!userDoc.exists() || userDoc.data().role !== forcedRole) {
+                        await setDoc(userDocRef, { email: user.email, role: forcedRole }, { merge: true });
+                    }
+                    currentUserRole = forcedRole;
+                } 
+                else if (userDoc.exists()) {
                     currentUserRole = userDoc.data().role;
-                } else {
+                } 
+                else {
                     // First time setup - Check if first user in DB
                     const q = query(collection(db, "users"));
                     const snap = await getDocs(q);
                     const role = snap.empty ? 'admin' : 'staff';
-                    await setDoc(doc(db, "users", user.uid), { email: user.email, role: role });
+                    await setDoc(userDocRef, { email: user.email, role: role });
                     currentUserRole = role;
                 }
                 
@@ -578,11 +593,15 @@
         document.getElementById('userRoleDisplay').innerText = role.toUpperCase();
         
         // Hide Restricted Areas based on Role
+        const allRestricted = document.querySelectorAll('.auth-admin, .auth-restricted');
+        allRestricted.forEach(el => el.classList.remove('hidden')); // Reset first
+
         if (role === 'staff') {
             document.querySelectorAll('.auth-admin, .auth-restricted').forEach(el => el.classList.add('hidden'));
         } else if (role === 'warehouse') {
              document.querySelectorAll('.auth-admin').forEach(el => el.classList.add('hidden'));
         }
+        // Superadmin and Admin see everything
     }
 
     window.showView = (viewId) => {
@@ -596,7 +615,9 @@
         
         // Update Nav Active State
         document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
-        event.target.closest('.nav-link').classList.add('active');
+        if(event && event.target) {
+            event.target.closest('.nav-link').classList.add('active');
+        }
 
         // Lazy Load Data
         if(viewId === 'usersView') loadUsers();
