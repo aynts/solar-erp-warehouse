@@ -2951,7 +2951,6 @@
         
         const row = `
             <tr>
-                <td><input type="text" class="form-control form-control-sm item-search bg-white" list="inventoryList" placeholder="Search Item Code" value="${itemVal}"></td>
                 <td><input type="text" class="form-control form-control-sm item-search bg-white" list="${listId}" placeholder="Search Item Code" value="${itemVal}"></td>
                 <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}" oninput="this.value = Math.abs(this.value)"></td>
                 <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
