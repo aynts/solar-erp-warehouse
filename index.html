@@ -2062,10 +2062,24 @@
 
     // --- SYSTEM USERS DROPDOWN ---
     async function fetchSystemUsers() {
+        const staffList = [
+            "U Phyo", "U Kyaw Myo Thant", "Ma Zar Zar Naing", "Ma Win Lae Sandar",
+            "Ma Phyo Nandar Min", "Ma Khin Nyein Chan", "Ma Khin Myo Thu",
+            "Ko Ye Thu Min", "Ko Win Htet Paing", "Ko Tun Tun Naing",
+            "Ko Tin Ko Ko Myint", "Ko Thet Paing Tun", "Ko Thant Zin Htwe",
+            "Ko Soe Thiha", "Ko Sai Myat Min Khant", "Ko Phyo Thet Naung",
+            "Ko Phyo Kyaw Kyaw", "Ko Kyaw Zaw Wai", "Ko Bo Hein",
+            "Ko Aung Myo Oo", "Ko Aung Khant Zaw"
+        ];
+
         const q = query(collection(db, "users"));
         const snap = await getDocs(q);
         systemUsers = [];
         snap.forEach(d => systemUsers.push(d.data().email));
+        const dbUsers = [];
+        snap.forEach(d => dbUsers.push(d.data().email));
+        
+        systemUsers = [...new Set([...staffList, ...dbUsers])].sort();
         populateUserDropdowns();
     }
 
