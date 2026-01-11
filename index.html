@@ -1596,6 +1596,7 @@
 <!-- Datalists for Party Search -->
 <datalist id="supplierList"></datalist>
 <datalist id="projectList"></datalist>
+<datalist id="returnableItemList"></datalist>
 
 <!-- FIREBASE & LOGIC -->
 <script type="module">
@@ -1750,6 +1751,7 @@
                 window.saveVoucher = saveVoucher;
                 window.quickAddParty = quickAddParty; // New function
                 window.addNewParty = addNewParty; // Standard function
+                window.handleVoucherPartyChange = handleVoucherPartyChange;
                 window.generateDemoData = generateDemoData; // New demo function
                 
                 window.openPartyModal = openPartyModal;
@@ -2881,6 +2883,7 @@
         const partyLabel = document.getElementById('voucherPartyLabel');
         const actionDiv = document.getElementById('voucherActions');
         const partyInput = document.getElementById('voucherParty');
+        partyInput.onchange = handleVoucherPartyChange;
         
         actionDiv.innerHTML = `<button type="button" class="btn btn-primary px-4" onclick="saveVoucher(false)">Save Draft</button>`;
         
@@ -2940,17 +2943,59 @@
     }
 
     window.addVoucherItemRow = (prefillData = null) => {
+        const type = document.getElementById('voucherType').value;
+        const listId = (type === 'return' || type === 'damage_return') ? 'returnableItemList' : 'inventoryList';
+
         const itemVal = prefillData ? prefillData.itemCode : '';
         const qtyVal = prefillData ? prefillData.qty : 1;
         
         const row = `
             <tr>
                 <td><input type="text" class="form-control form-control-sm item-search bg-white" list="inventoryList" placeholder="Search Item Code" value="${itemVal}"></td>
+                <td><input type="text" class="form-control form-control-sm item-search bg-white" list="${listId}" placeholder="Search Item Code" value="${itemVal}"></td>
                 <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}" oninput="this.value = Math.abs(this.value)"></td>
                 <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
             </tr>
         `;
         document.getElementById('voucherItemsBody').insertAdjacentHTML('beforeend', row);
+    }
+
+    window.handleVoucherPartyChange = async () => {
+        const type = document.getElementById('voucherType').value;
+        const party = document.getElementById('voucherParty').value;
+        
+        if ((type === 'return' || type === 'damage_return') && party) {
+            toggleLoading(true);
+            const list = document.getElementById('returnableItemList');
+            list.innerHTML = '';
+            
+            // Fetch transactions for this party to determine returnable items
+            const q = query(collection(db, "transactions"), where("party", "==", party));
+            const snap = await getDocs(q);
+            
+            const usageMap = {};
+            snap.forEach(d => {
+                const t = d.data();
+                if (!t.itemId) return;
+                const invItem = inventory.find(i => i.id === t.itemId);
+                const code = invItem ? invItem.itemCode : 'UNKNOWN';
+                
+                if (!usageMap[code]) usageMap[code] = { qty: 0, name: t.itemName };
+                
+                if (t.type === 'out') usageMap[code].qty += t.qty;
+                if (t.type === 'in') usageMap[code].qty -= t.qty;
+            });
+            
+            Object.keys(usageMap).forEach(code => {
+                if (usageMap[code].qty > 0) {
+                    const opt = document.createElement('option');
+                    opt.value = code;
+                    opt.innerText = `${usageMap[code].name} (Site Bal: ${usageMap[code].qty})`;
+                    list.appendChild(opt);
+                }
+            });
+            toggleLoading(false);
+        }
     }
 
     window.saveVoucher = async (autoProcess = false) => {
@@ -2992,6 +3037,32 @@
         const recBy = document.getElementById('voucherRecBy')?.value;
         if ((type === 'return' || type === 'damage_return') && retBy && recBy && retBy === recBy) {
             return alert("Returned By and Received By cannot be the same person.");
+        }
+        
+        // --- RETURN VALIDATION: Check if project actually has these items ---
+        if (type === 'return' || type === 'damage_return') {
+            toggleLoading(true);
+            const q = query(collection(db, "transactions"), where("party", "==", party));
+            const snap = await getDocs(q);
+            const usageMap = {};
+            snap.forEach(d => {
+                const t = d.data();
+                if (!t.itemId) return;
+                const invItem = inventory.find(i => i.id === t.itemId);
+                const code = invItem ? invItem.itemCode : 'UNKNOWN';
+                if (!usageMap[code]) usageMap[code] = 0;
+                if (t.type === 'out') usageMap[code] += t.qty;
+                if (t.type === 'in') usageMap[code] -= t.qty;
+            });
+            
+            for(let item of items) {
+                const siteBal = usageMap[item.itemCode] || 0;
+                if (item.qty > siteBal) {
+                    toggleLoading(false);
+                    return alert(`Invalid Return! Project '${party}' only has ${siteBal} of ${item.itemCode}. You tried to return ${item.qty}.`);
+                }
+            }
+            toggleLoading(false);
         }
 
         if(relatedPoId && type === 'receipt') {
