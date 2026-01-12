@@ -616,14 +616,19 @@
             <div id="suppliersView" class="hidden">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h3 class="fw-bold">Suppliers List</h3>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('supplier')">
-                        <i class="fas fa-plus me-1"></i> Add Supplier
-                    </button>
+                    <div>
+                        <button class="btn btn-white border shadow-sm btn-sm me-2" onclick="exportPartiesCSV('supplier')">
+                            <i class="fas fa-download me-1"></i> Export Audit
+                        </button>
+                        <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('supplier')">
+                            <i class="fas fa-plus me-1"></i> Add Supplier
+                        </button>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle">
-                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
+                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Address</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
                             <tbody id="suppliersTableBody"></tbody>
                         </table>
                     </div>
@@ -634,14 +639,19 @@
             <div id="customersView" class="hidden">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h3 class="fw-bold">Customers & Projects List</h3>
-                    <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('project')">
-                        <i class="fas fa-plus me-1"></i> Add Customer/Project
-                    </button>
+                    <div>
+                        <button class="btn btn-white border shadow-sm btn-sm me-2" onclick="exportPartiesCSV('project')">
+                            <i class="fas fa-download me-1"></i> Export Audit
+                        </button>
+                        <button class="btn btn-primary btn-sm shadow-sm" onclick="openPartyModal('project')">
+                            <i class="fas fa-plus me-1"></i> Add Customer/Project
+                        </button>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle">
-                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
+                            <thead class="table-light"><tr><th>Name</th><th>Contact</th><th>Address</th><th>Added Date</th><th class="text-end">Actions</th></tr></thead>
                             <tbody id="customersTableBody"></tbody>
                         </table>
                     </div>
@@ -1770,6 +1780,7 @@
                 window.loadProjectUsage = loadProjectUsage;
                 window.generateNextCode = generateNextCode; 
                 window.fetchSystemUsers = fetchSystemUsers;
+                window.exportPartiesCSV = exportPartiesCSV;
                 
 
                 // --- QR INTEGRATION ---
@@ -2027,50 +2038,43 @@
         filtered.forEach(p => {
             const date = p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : '-';
             const contact = p.contact || '-'; 
-            
-            // Placeholder for transaction summary (You'll need to fetch real data)
-            let summary = `<span class="text-muted small">Click 'View' to see details.</span>`;
-            
-            // In a real implementation, fetch transaction data related to 'p.name'
-            // and construct a meaningful summary here.  Example:
-            // summary = `Total Purchases: $10,000, Last Order: 2024-01-01`;
+            const address = p.address || '-';
 
             const actions = `
                 <button class="btn btn-sm btn-outline-primary me-1" onclick="openPartyModal('${p.type}', '${p.id}')">Edit</button>
                 <button class="btn btn-sm btn-outline-info" onclick="viewPartyHistory('${p.name}')">View</button>
             `;
-            
-            let extra = '';
-            if(type === 'supplier') {
-                extra = `
-                    <td>
-                        ${summary}
-                    </td>
-                `;
-            }
-            else {
-                // For Projects, show address
-                extra = `
-                    <td>
-                        ${p.address || '-'}
-                    </td>
-                    <td>
-                        ${summary}
-                    </td>
-                `;
-            }
 
             tbody.innerHTML += `
                 <tr>
-                    ${type === 'project' ? '<td></td>' : ''}
-                    
                     <td class="fw-bold">${p.name}</td>
                     <td>${contact}</td>
+                    <td class="small text-muted">${address}</td>
                     <td>${date}</td>
                     <td class="text-end">${actions}</td>
                 </tr>
             `;
         });
+    }
+
+    window.exportPartiesCSV = (type) => {
+        const filtered = parties.filter(p => p.type === type);
+        if(filtered.length === 0) return alert("No data to export.");
+        
+        let csv = ["Name,Contact,Address,Added Date"];
+        filtered.forEach(p => {
+            const date = p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : '-';
+            const name = `"${(p.name || '').replace(/"/g, '""')}"`;
+            const contact = `"${(p.contact || '').replace(/"/g, '""')}"`;
+            const address = `"${(p.address || '').replace(/"/g, '""')}"`;
+            csv.push([name, contact, address, date].join(","));
+        });
+        
+        const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `${type}_list_audit.csv`;
+        link.click();
     }
 
     // --- SYSTEM USERS DROPDOWN ---
@@ -2572,6 +2576,16 @@
 
     window.saveItem = async () => {
         const id = document.getElementById('itemId').value;
+        const itemCode = document.getElementById('itemCode').value.trim();
+        
+        if (!itemCode) return alert("Item Code is required");
+
+        // Unique Check
+        const duplicate = inventory.find(i => i.itemCode === itemCode && i.id !== id);
+        if(duplicate) {
+            return alert(`Duplicate Item Code detected!\nCode: ${itemCode}\nExisting Item: ${duplicate.brand} ${duplicate.model}`);
+        }
+
         const category = document.getElementById('itemCategory').value;
         
         // Harvest Dynamic Specs
@@ -2588,7 +2602,7 @@
         const specString = specStringParts.join(', ');
 
         const data = {
-            itemCode: document.getElementById('itemCode').value,
+            itemCode: itemCode,
             category: category,
             brand: document.getElementById('itemBrand').value,
             model: document.getElementById('itemModel').value,
