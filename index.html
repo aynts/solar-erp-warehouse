@@ -2138,8 +2138,17 @@
         const name = document.getElementById('partyName').value;
         const contact = document.getElementById('partyContact').value;
         const address = document.getElementById('partyAddress').value;
+        const name = document.getElementById('partyName').value.trim();
+        const contact = document.getElementById('partyContact').value.trim();
+        const address = document.getElementById('partyAddress').value.trim();
 
         if(!name) return alert("Name is required");
+
+        // Check for duplicates (Case-insensitive, excluding current ID if editing)
+        const duplicate = parties.find(p => p.name.toLowerCase() === name.toLowerCase() && p.id !== id);
+        if (duplicate) {
+            return alert(`Error: A ${duplicate.type} named "${duplicate.name}" already exists.`);
+        }
 
         const data = { name, contact, address, type };
 
