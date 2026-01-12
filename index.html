@@ -2074,8 +2074,6 @@
 
         const q = query(collection(db, "users"));
         const snap = await getDocs(q);
-        systemUsers = [];
-        snap.forEach(d => systemUsers.push(d.data().email));
         const dbUsers = [];
         snap.forEach(d => dbUsers.push(d.data().email));
         
@@ -2430,7 +2428,7 @@
         container.innerHTML = ''; // Clear previous
         if(code) {
             new QRCode(container, {
-                text: code,
+                text: window.location.origin + window.location.pathname + '?code=' + code,
                 width: 100,
                 height: 100,
                 colorDark : "#000000",
@@ -3871,8 +3869,8 @@
         for(const item of inventory) {
             if(!item.itemCode) continue;
             const qty = (printPerUnit && item.balance > 0) ? item.balance : 1;
-            // Scan Value is just the Item Code for simple internal use
-            const qrSrc = await generateQR(item.itemCode);
+            // Scan Value is full URL for direct access
+            const qrSrc = await generateQR(window.location.origin + window.location.pathname + '?code=' + item.itemCode);
 
             for(let i=1; i<=qty; i++) {
                 html += `
