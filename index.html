@@ -1367,6 +1367,8 @@
                                 <th>Item (Search)</th>
                                 <th style="width:100px;">Qty</th>
                                 <th style="width:120px;" class="auth-price-only">Cost/Price</th>
+                                <th style="width:80px;">Qty</th>
+                                <th>Serial No.</th>
                                 <th style="width:50px;"></th>
                             </tr>
                         </thead>
@@ -3030,11 +3032,13 @@
 
         const itemVal = prefillData ? prefillData.itemCode : '';
         const qtyVal = prefillData ? prefillData.qty : 1;
+        const serialVal = prefillData ? (prefillData.serials || '') : '';
         
         const row = `
             <tr>
                 <td><input type="text" class="form-control form-control-sm item-search bg-white" list="${listId}" placeholder="Search Item Code" value="${itemVal}"></td>
                 <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}" oninput="this.value = Math.abs(this.value)"></td>
+                <td><input type="text" class="form-control form-control-sm serial-input bg-white" placeholder="S/N (Optional)" value="${serialVal}"></td>
                 <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
             </tr>
         `;
@@ -3091,6 +3095,7 @@
         for(let row of rows) {
             const code = row.querySelector('.item-search').value;
             const qtyInput = row.querySelector('.qty-input');
+            const serialInput = row.querySelector('.serial-input');
             const qty = parseInt(qtyInput.value);
             
             // Negative Check
@@ -3107,6 +3112,8 @@
                     itemCode: item.itemCode, 
                     itemName: `${item.brand} ${item.model}`,
                     qty: qty 
+                    qty: qty,
+                    serials: serialInput ? serialInput.value.trim() : ''
                 });
             }
         }
@@ -3689,12 +3696,14 @@
             const invItem = inventory.find(inv => inv.id === i.itemId);
             const unit = invItem ? (invItem.unit || 'Pcs') : 'Pcs';
             const desc = invItem ? (invItem.brand + " " + invItem.model) : i.itemName;
+            const serialDisplay = i.serials ? `<div class="small text-muted mt-1" style="font-size:0.75rem;"><i class="fas fa-barcode me-1"></i>S/N: ${i.serials}</div>` : '';
 
             tbody.innerHTML += `
                 <tr>
                     <td>${count++}</td>
                     <td>${i.itemCode}</td>
                     <td>${desc}</td>
+                    <td>${desc}${serialDisplay}</td>
                     <td class="text-center">${i.qty}</td>
                     <td class="text-center">${unit}</td>
                 </tr>
