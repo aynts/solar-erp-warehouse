@@ -1781,11 +1781,18 @@
                 // URL Param Check
                 const urlParams = new URLSearchParams(window.location.search);
                 const code = urlParams.get('code');
+                const voucherId = urlParams.get('voucher');
+                const projectId = urlParams.get('project');
+
                 if (code) {
                     document.getElementById('searchInput').value = code;
                     filterInventory();
                     const item = inventory.find(i => i.itemCode === code);
                     if(item) openItemModal(item.id);
+                } else if (voucherId) {
+                    printVoucher(voucherId);
+                } else if (projectId) {
+                    viewPartyHistory(projectId);
                 }
                 
                 toggleLoading(false);
@@ -4126,6 +4133,10 @@
             const date = t.date ? new Date(t.date.seconds * 1000).toLocaleDateString() : '-';
             tbody.innerHTML += `<tr><td>${date}</td><td>${t.type} (${t.subType||'-'})</td><td>-</td><td>${t.itemName}</td><td>${t.qty}</td><td>${t.party}</td><td>-</td><td>${t.user}</td></tr>`;
         });
+
+        // Re-apply filter if exists (e.g. from URL param or viewPartyHistory)
+        const filterVal = document.getElementById('flowSearchInput').value;
+        if(filterVal) filterFlow();
     }
 
     window.filterFlow = () => {
