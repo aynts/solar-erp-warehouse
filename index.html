@@ -1645,6 +1645,13 @@
 <datalist id="returnableItemList"></datalist>
 
 <!-- FIREBASE & LOGIC -->
+<script>
+    // Safety stubs: Prevent ReferenceError if user clicks before Module loads
+    window.handleLogin = () => console.log("System loading...");
+    window.handleRegister = () => console.log("System loading...");
+    window.toggleAuthMode = () => {};
+</script>
+
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
