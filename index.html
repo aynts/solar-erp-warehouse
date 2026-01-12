@@ -236,6 +236,9 @@
         .kanban-card.status-shipped { border-left-color: #6610f2; }
         .kanban-card.status-received { border-left-color: #198754; }
         .kanban-card.status-completed { border-left-color: #6c757d; }
+
+        /* Fix for Quick Add Modal appearing behind Voucher Modal */
+        #partyModal { z-index: 1080 !important; }
     </style>
 </head>
 <body>
@@ -2150,6 +2153,13 @@
         bootstrap.Modal.getInstance(document.getElementById('partyModal')).hide();
         await loadParties();
         loadPartiesView(type);
+
+        // Auto-fill Voucher if open
+        const voucherModal = document.getElementById('voucherModal');
+        if(voucherModal && voucherModal.classList.contains('show')) {
+            document.getElementById('voucherParty').value = name;
+            handleVoucherPartyChange();
+        }
     }
 
     window.viewPartyHistory = (name) => {
