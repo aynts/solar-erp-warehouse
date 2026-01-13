@@ -135,6 +135,8 @@ async function initApp() {
             window.generateNextCode = generateNextCode; 
             window.fetchSystemUsers = fetchSystemUsers;
             window.exportPartiesCSV = exportPartiesCSV;
+            window.exportInventoryPDF = exportInventoryPDF;
+            window.printVoucherLabels = printVoucherLabels;
             
 
             // --- QR INTEGRATION ---
@@ -402,10 +404,10 @@ window.loadPartiesView = (type) => {
         tbody.innerHTML += `
             <tr>
                 <td class="fw-bold">${p.name}</td>
-                <td></td>
-                <td class="small text-muted"></td>
-                <td></td>
-                <td class="text-end"></td>
+                <td>${contact}</td>
+                <td class="small text-muted">${address}</td>
+                <td>${date}</td>
+                <td class="text-end">${actions}</td>
             </tr>
         `;
     });
@@ -460,7 +462,8 @@ function populateUserDropdowns() {
     if(!req || !app) return;
     
     let html = '<option value="">Select Staff...</option>';
-    systemUsers.forEach(u => html += `<option value=""></option>`);
+    systemUsers.forEach(u => html += `<option value="${u}">${u}</option>`);
+    
     req.innerHTML = html;
     app.innerHTML = html;
     if(ret) ret.innerHTML = html;
@@ -469,6 +472,17 @@ function populateUserDropdowns() {
 
 // Add New Party from View (Replaced by Modal Trigger)
 window.addNewParty = (type) => {
+    const req = document.getElementById('voucherReqBy');
+    const app = document.getElementById('voucherAppBy');
+    const ret = document.getElementById('voucherRetBy');
+    const rec = document.getElementById('voucherRecBy');
+    let html = '<option value="">Select Staff...</option>';
+    systemUsers.forEach(u => html += `<option value="${u}">${u}</option>`);
+    if(req) req.innerHTML = html;
+    if(app) app.innerHTML = html;
+    if(ret) ret.innerHTML = html;
+    if(rec) rec.innerHTML = html;
+
     openPartyModal(type);
 }
 
@@ -619,7 +633,7 @@ function generateNextCode() {
     });
     
     const nextNum = String(maxNum + 1).padStart(3, '0');
-    const finalCode = ``;
+    const finalCode = `${prefix}-${brandCode}-${nextNum}`;
     document.getElementById('itemCode').value = finalCode;
     
     // Auto-generate QR for preview
@@ -804,13 +818,13 @@ window.filterInventory = () => {
             <tr class="">
                 <td class="fw-bold text-primary">${item.itemCode || '-'}</td>
                 <td><span class="badge bg-light text-secondary border">${item.category}</span></td>
-                <td></td>
+                <td>${details}</td>
                 <td class="text-center">
                     <span class="badge bg-indigo text-white" style="background-color: #6610f2;">${item.balance} ${item.unit || ''}</span>
                 </td>
                 <td class="text-center text-danger small">${item.damagedBalance || 0}</td>
-                
-                <td class="text-end"></td>
+                ${priceCells}
+                <td class="text-end">${actions}</td>
             </tr>
         `;
     });
@@ -1728,9 +1742,9 @@ window.comparePO = async (poId) => {
                 <tr>
                     <td>${item.itemCode}</td>
                     <td>${item.itemName}</td>
-                    <td class="text-center"></td>
-                    <td class="text-center"></td>
-                    <td class="text-center "></td>
+                    <td class="text-center">${ordered}</td>
+                    <td class="text-center">${received}</td>
+                    <td class="text-center ${color}">${balance}</td>
                 </tr>
             `;
         });
@@ -1807,11 +1821,12 @@ window.loadVouchers = async () => {
             <tr>
                 <td>${v.date}</td>
                 <td>${v.party}</td>
-                <td></td>
+                <td>${poRef}</td>
                 <td>${v.items.length} Items</td>
                 <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
                 <td>
                     <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
+                    <button class="btn btn-sm btn-outline-dark ms-1" onclick="printVoucherLabels('${d.id}')" title="Print Labels"><i class="fas fa-tags"></i></button>
                     ${v.status === 'draft' ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Confirm</button>` : ''}
                 </td>
             </tr>`;
@@ -1841,7 +1856,7 @@ window.loadVouchers = async () => {
             <tr>
                 <td>${v.date}</td>
                 <td>${v.party}</td>
-                <td></td>
+                <td>${typeLabel}</td>
                 <td>${v.items.length} Items</td>
                 <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
                 <td>
@@ -2089,10 +2104,9 @@ window.printVoucher = async (id) => {
             <tr>
                 <td>${count++}</td>
                 <td>${i.itemCode}</td>
-                <td></td>
-                <td></td>
+                <td>${desc} ${serialDisplay}</td>
                 <td class="text-center">${i.qty}</td>
-                <td class="text-center"></td>
+                <td class="text-center">${unit}</td>
             </tr>
         `;
     });
@@ -2562,13 +2576,13 @@ async function loadProjectUsage() {
 
         tbody.innerHTML += `
             <tr>
-                <td class="fw-bold"></td>
-                <td></td>
+                <td class="fw-bold">${proj}</td>
+                <td>${statusBadge}</td>
                 <td>${d.sent}</td>
                 <td>${d.returned}</td>
                 <td class="text-danger fw-bold">${d.damaged}</td>
-                <td></td>
-                <td></td>
+                <td class="fw-bold">${net}</td>
+                <td>${actionBtn}</td>
             </tr>
         `;
     }
@@ -2589,7 +2603,10 @@ async function loadFlow() {
     snap.forEach(d => {
         const t = d.data();
         const date = t.date ? new Date(t.date.seconds * 1000).toLocaleDateString() : '-';
-        tbody.innerHTML += `<tr><td></td><td>${t.type} (${t.subType||'-'})</td><td>-</td><td>${t.itemName}</td><td>${t.qty}</td><td>${t.party}</td><td>-</td><td>${t.user}</td></tr>`;
+        const item = inventory.find(i => i.id === t.itemId);
+        const category = item ? item.category : '-';
+        const price = item ? (item.sellingPrice || '-') : '-';
+        tbody.innerHTML += `<tr><td>${date}</td><td>${t.type} (${t.subType||'-'})</td><td>${category}</td><td>${t.itemName}</td><td>${t.qty}</td><td>${t.party}</td><td>${price}</td><td>${t.user}</td></tr>`;
     });
 
     // Re-apply filter if exists (e.g. from URL param or viewPartyHistory)
@@ -2625,7 +2642,7 @@ async function loadUsers() {
                 <td><span class="badge bg-secondary">${u.role.toUpperCase()}</span></td>
                 <td>
                     <select onchange="changeUserRole('${d.id}', this.value)" class="form-select form-select-sm" style="width:150px">
-                        
+                        ${roleOptions}
                     </select>
                 </td>
             </tr>`;
@@ -2708,6 +2725,134 @@ window.downloadCSV = (tableId, filename) => {
     document.body.appendChild(downloadLink);
     downloadLink.click();
     document.body.removeChild(downloadLink);
+}
+
+// --- EXPORT INVENTORY PDF WITH QR ---
+window.exportInventoryPDF = async () => {
+    if(inventory.length === 0) return alert("No data to export.");
+    toggleLoading(true);
+    
+    const generateQR = (text) => {
+        return new Promise((resolve) => {
+            const div = document.createElement('div');
+            new QRCode(div, { text: text, width: 64, height: 64, correctLevel: QRCode.CorrectLevel.L });
+            setTimeout(() => {
+                const img = div.querySelector('img');
+                if (img && img.src) resolve(img.src);
+                else {
+                    const canvas = div.querySelector('canvas');
+                    resolve(canvas ? canvas.toDataURL() : '');
+                }
+            }, 50); 
+        });
+    };
+
+    let html = `
+        <html><head><title>Inventory List</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; font-size: 11px; }
+            th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; vertical-align: middle; }
+            th { background-color: #f0f0f0; font-weight: bold; }
+            .qr-cell { text-align: center; width: 70px; }
+            .qr-img { width: 50px; height: 50px; }
+            .text-end { text-align: right; }
+            h2 { margin-bottom: 5px; }
+            .meta { font-size: 10px; color: #666; margin-bottom: 20px; }
+        </style>
+        </head><body>
+        <h2>Inventory Report</h2>
+        <div class="meta">Generated: ${new Date().toLocaleString()} | Total Items: ${inventory.length}</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th class="qr-cell">QR</th>
+                    <th>Item Code</th>
+                    <th>Category</th>
+                    <th>Brand / Model</th>
+                    <th>Specs</th>
+                    <th class="text-end">Stock</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+
+    let count = 1;
+    for(const item of inventory) {
+        const qrSrc = await generateQR(window.location.origin + window.location.pathname + '?code=' + item.itemCode);
+        const specs = item.specs ? Object.values(item.specs).join(", ") : (item.spec || '');
+        
+        html += `
+            <tr>
+                <td>${count++}</td>
+                <td class="qr-cell"><img src="${qrSrc}" class="qr-img"></td>
+                <td><strong>${item.itemCode}</strong></td>
+                <td>${item.category}</td>
+                <td>${item.brand}<br>${item.model}</td>
+                <td>${specs}</td>
+                <td class="text-end"><strong>${item.balance}</strong> ${item.unit || ''}</td>
+            </tr>
+        `;
+    }
+
+    html += `</tbody></table></body></html>`;
+    
+    toggleLoading(false);
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+    setTimeout(() => { win.print(); }, 1000);
+}
+
+// --- PRINT LABELS FOR RECEIVED ITEMS ---
+window.printVoucherLabels = async (id) => {
+    toggleLoading(true);
+    try {
+        const docSnap = await getDoc(doc(db, "vouchers", id));
+        if(!docSnap.exists()) { toggleLoading(false); return; }
+        const v = docSnap.data();
+        
+        const generateQR = (text) => {
+            return new Promise((resolve) => {
+                const div = document.createElement('div');
+                new QRCode(div, { text: text, width: 128, height: 128 });
+                setTimeout(() => {
+                    const img = div.querySelector('img');
+                    if (img && img.src) resolve(img.src);
+                    else {
+                        const canvas = div.querySelector('canvas');
+                        resolve(canvas ? canvas.toDataURL() : '');
+                    }
+                }, 50); 
+            });
+        };
+
+        let html = `<html><head><title>Received Items Labels</title><style>body{font-family:sans-serif}.label-grid{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}.label-item{width:200px;height:280px;border:1px dotted #ccc;padding:10px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-inside:avoid}.qr-img{width:120px;height:120px;margin:10px 0}.code{font-weight:bold;font-size:16px;margin-bottom:5px}.meta{font-size:12px;color:#555}.seq{font-size:10px;color:#999;margin-top:5px}@media print{body{margin:0}.label-item{border:1px solid #eee}}</style></head><body><div class="label-grid">`;
+
+        for(const item of v.items) {
+            const invItem = inventory.find(i => i.itemCode === item.itemCode);
+            const brand = invItem ? invItem.brand : '';
+            const model = invItem ? invItem.model : item.itemName;
+            
+            const qrSrc = await generateQR(window.location.origin + window.location.pathname + '?code=' + item.itemCode);
+            const qty = item.qty || 1;
+            
+            for(let i=1; i<=qty; i++) {
+                html += `<div class="label-item"><div class="code">${item.itemCode}</div><img src="${qrSrc}" class="qr-img"><div class="meta">${brand}</div><div class="meta">${model}</div><div class="seq">Rec: ${v.date} (${i}/${qty})</div></div>`;
+            }
+        }
+        html += `</div></body></html>`;
+        
+        const iframe = document.createElement('iframe');
+        iframe.style.position = 'absolute'; iframe.style.width = '0px'; iframe.style.height = '0px'; iframe.style.border = 'none';
+        document.body.appendChild(iframe);
+        const doc = iframe.contentWindow.document;
+        doc.open(); doc.write(html); doc.close();
+        setTimeout(() => { iframe.contentWindow.focus(); iframe.contentWindow.print(); }, 500);
+
+    } catch(e) { console.error(e); alert("Error: " + e.message); }
+    toggleLoading(false);
 }
 
 function toggleLoading(show) {
