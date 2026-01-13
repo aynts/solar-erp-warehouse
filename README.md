@@ -28,6 +28,8 @@ Step 2: Upload Files
 
 Upload the index.html file provided here to the root of your repository.
 
+Create an empty file named `.nojekyll` in the root. This tells GitHub Pages to skip the Jekyll build process, making deployment much faster.
+
 Commit and push the changes.
 
 Step 3: Enable GitHub Pages
