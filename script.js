@@ -142,6 +142,8 @@ async function initApp() {
             // --- QR INTEGRATION ---
             window.generateQR = generateQR;
             window.printSingleQRCode = printSingleQRCode;
+            window.startQRScanner = startQRScanner;
+            window.handleScannedData = handleScannedData;
 
             // Load Data - ONE TIME ONLY
             await loadParties();
@@ -894,6 +896,66 @@ function printSingleQRCode() {
     printWindow.document.write('<script>window.onload = function() { window.print(); window.close(); }<\/script>');
     printWindow.document.write('</body></html>');
     printWindow.document.close();
+}
+
+// --- QR SCANNER LOGIC ---
+window.startQRScanner = () => {
+    const modalEl = document.getElementById('qrScannerModal');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
+
+    // Delay to ensure modal is rendered
+    setTimeout(() => {
+        const html5QrCode = new Html5Qrcode("qr-reader");
+        const qrCodeSuccessCallback = (decodedText, decodedResult) => {
+            // Stop scanning
+            html5QrCode.stop().then(() => {
+                modal.hide();
+                handleScannedData(decodedText);
+            }).catch(err => console.error("Failed to stop scanning", err));
+        };
+        
+        const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+        
+        // Start scanning
+        html5QrCode.start({ facingMode: "environment" }, config, qrCodeSuccessCallback)
+        .catch(err => {
+            console.error("Error starting scanner", err);
+            alert("Camera access failed or denied. Please ensure you are on HTTPS or localhost.");
+            modal.hide();
+        });
+
+        // Cleanup on modal close (if user cancels)
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            try {
+                if (html5QrCode.isScanning) {
+                    html5QrCode.stop().catch(e => console.log("Stop failed", e));
+                }
+                html5QrCode.clear();
+            } catch(e) { /* ignore */ }
+        }, { once: true });
+
+    }, 300);
+}
+
+window.handleScannedData = (text) => {
+    let code = text;
+    let voucherId = null;
+
+    // Check if URL and extract params
+    try {
+        const url = new URL(text);
+        if (url.searchParams.has('code')) code = url.searchParams.get('code');
+        if (url.searchParams.has('voucher')) voucherId = url.searchParams.get('voucher');
+    } catch (e) { /* Not a URL, assume raw code */ }
+
+    if (voucherId) {
+        printVoucher(voucherId);
+    } else {
+        const item = inventory.find(i => i.itemCode === code);
+        if (item) openItemModal(item.id);
+        else alert("Item not found in inventory: " + code);
+    }
 }
 
 window.openItemModal = (id=null) => {
