@@ -1,0 +1,2681 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, addDoc, deleteDoc, query, orderBy, serverTimestamp, limit, where, writeBatch } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js";
+
+// --- HARDCODED CONFIGURATION ---
+const firebaseConfig = {
+    apiKey: "AIzaSyAe6YjIBihzTl7_jRShoDqDKoK5DrYhsfY",
+    authDomain: "solar-erp-warehouse-2135-69979.firebaseapp.com",
+    projectId: "solar-erp-warehouse-2135-69979",
+    storageBucket: "solar-erp-warehouse-2135-69979.firebasestorage.app",
+    messagingSenderId: "587844692830",
+    appId: "1:587844692830:web:706e74de156c5aec1c3dcf"
+};
+
+let app, auth, db;
+let currentUser = null;
+let currentUserRole = 'staff'; // default
+let inventory = [];
+let parties = [];
+let systemUsers = [];
+let currentCategoryFilter = 'All';
+let isInventoryLoaded = false; // CACHE FLAG
+
+// --- DYNAMIC FIELD CONFIGURATION ---
+const categoryFieldConfig = {
+    'Solar': [
+        { id: 'spec_watt', label: 'Wattage', placeholder: 'e.g. 590W' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. Monofacial' }
+    ],
+    'Battery': [
+        { id: 'spec_volt', label: 'Voltage', placeholder: 'e.g. 51.2V' },
+        { id: 'spec_amp', label: 'Capacity', placeholder: 'e.g. 304AH' },
+        { id: 'spec_chem', label: 'Type', placeholder: 'e.g. Lithium/Gel' }
+    ],
+    'Inverter': [
+        { id: 'spec_power', label: 'Power', placeholder: 'e.g. 6kw' },
+        { id: 'spec_phase', label: 'Phase', placeholder: 'e.g. Single Phase' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. Hybrid' }
+    ],
+    'Solar Pumps': [
+        { id: 'spec_power', label: 'Power/HP', placeholder: 'e.g. 2HP' },
+        { id: 'spec_head', label: 'Max Head', placeholder: 'e.g. 100m' },
+        { id: 'spec_flow', label: 'Flow Rate', placeholder: 'e.g. 5 m3/h' }
+    ],
+    'Solar Controllers': [
+        { id: 'spec_amp', label: 'Amps', placeholder: 'e.g. 60A' },
+        { id: 'spec_volt', label: 'System Voltage', placeholder: 'e.g. 12/24/48V' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. MPPT' }
+    ],
+    'All-in-One': [
+        { id: 'spec_inv', label: 'Inverter Output', placeholder: 'e.g. 3KW' },
+        { id: 'spec_batt', label: 'Battery Capacity', placeholder: 'e.g. 2.5kWh' }
+    ],
+    'Powerstations': [
+        { id: 'spec_cap', label: 'Capacity', placeholder: 'e.g. 1024Wh' },
+        { id: 'spec_out', label: 'AC Output', placeholder: 'e.g. 1200W' }
+    ],
+    'Audio Systems': [
+        { id: 'spec_watt', label: 'Output Power', placeholder: 'e.g. 100W' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. Solar Speaker' }
+    ],
+    'AC Accessories': [
+        { id: 'spec_amp', label: 'Amps', placeholder: 'e.g. 32A' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. AC Breaker' }
+    ],
+    'DC Accessories': [
+        { id: 'spec_amp', label: 'Amps', placeholder: 'e.g. 63A' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. DC Fuse' }
+    ],
+    'Breaker Box': [
+        { id: 'spec_way', label: 'Ways', placeholder: 'e.g. 12 Way' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. Combiner Box' }
+    ],
+    'Cables and Wiring Accessories': [
+        { id: 'spec_size', label: 'Size', placeholder: 'e.g. 4mm' },
+        { id: 'spec_core', label: 'Core', placeholder: 'e.g. 1 Core' },
+        { id: 'spec_color', label: 'Color', placeholder: 'e.g. Red' }
+    ],
+    'Earthing System Kit': [
+        { id: 'spec_mat', label: 'Material', placeholder: 'e.g. Copper' },
+        { id: 'spec_dim', label: 'Dimension', placeholder: 'e.g. 1.5m Rod' }
+    ],
+    // Default fallback
+    'default': [
+        { id: 'spec_detail', label: 'Specification', placeholder: 'General Spec' }
+    ]
+};
+
+async function initApp() {
+    try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch (e) {
+        console.error("Firebase Initialization Error:", e);
+        alert("Error connecting to database. See console.");
+        return;
+    }
+    
+    onAuthStateChanged(auth, async (user) => {
+        if (user) {
+            toggleLoading(true);
+            currentUser = user;
+            try {
+                const userDoc = await getDoc(doc(db, "users", user.uid));
+                if (userDoc.exists()) {
+                    currentUserRole = userDoc.data().role;
+                } else {
+                    // Auto-create doc for existing auth user if missing in DB (e.g. after DB reset)
+                    let role = 'staff';
+                    if(user.email === 'thetswe.it@gmail.com') role = 'superadmin';
+                    else if(user.email === 'motherhomesolar@gmail.com') role = 'admin';
+                    
+                    await setDoc(doc(db, "users", user.uid), {
+                        email: user.email,
+                        role: role,
+                        createdAt: serverTimestamp()
+                    });
+                    currentUserRole = role;
+                }
+            } catch(err) {
+                console.error("Role fetch error", err);
+                currentUserRole = 'staff';
+            }
+            
+            setupUIForUser(user.email, currentUserRole);
+            document.getElementById('authContainer').classList.add('hidden');
+            document.getElementById('appContainer').classList.remove('hidden');
+            
+            // Initialize global functions
+            window.loadInventory = loadInventory;
+            window.loadFlow = loadFlow;
+            window.loadDashboard = loadDashboard;
+            window.loadProjectUsage = loadProjectUsage;
+            window.generateNextCode = generateNextCode; 
+            window.fetchSystemUsers = fetchSystemUsers;
+            window.exportPartiesCSV = exportPartiesCSV;
+            
+
+            // --- QR INTEGRATION ---
+            window.generateQR = generateQR;
+            window.printSingleQRCode = printSingleQRCode;
+
+            // Load Data - ONE TIME ONLY
+            await loadParties();
+            await fetchSystemUsers();
+            await loadInventory(false); // Do not force, just load
+            
+            // Dashboard will now load from memory via loadInventory logic
+
+            // URL Param Check
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const voucherId = urlParams.get('voucher');
+            const projectId = urlParams.get('project');
+
+            if (code) {
+                document.getElementById('searchInput').value = code;
+                filterInventory();
+                const item = inventory.find(i => i.itemCode === code);
+                if(item) openItemModal(item.id);
+            } else if (voucherId) {
+                printVoucher(voucherId);
+            } else if (projectId) {
+                viewPartyHistory(projectId);
+            }
+            
+            toggleLoading(false);
+        } else {
+            document.getElementById('authContainer').classList.remove('hidden');
+            document.getElementById('appContainer').classList.add('hidden');
+            currentUser = null;
+            currentUserRole = null;
+        }
+    });
+}
+
+// --- AUTH UI LOGIC ---
+window.toggleAuthMode = (mode) => {
+    document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login');
+    document.getElementById('registerForm').classList.toggle('hidden', mode !== 'register');
+}
+
+window.handleLogin = async () => {
+    const e = document.getElementById('loginEmail').value;
+    const p = document.getElementById('loginPass').value;
+    try { await signInWithEmailAndPassword(auth, e, p); } 
+    catch(err) { 
+        console.error(err);
+        if(err.code === 'auth/operation-not-allowed') {
+            alert("CONFIGURATION ERROR:\n\nEmail/Password sign-in is disabled.\n\n1. Go to Firebase Console > Authentication > Sign-in method.\n2. Enable 'Email/Password'.");
+        } else {
+            alert("Login Error: " + err.message); 
+        }
+    }
+}
+
+window.handleRegister = async () => {
+    const e = document.getElementById('regEmail').value;
+    const p = document.getElementById('regPass').value;
+    try {
+        const cred = await createUserWithEmailAndPassword(auth, e, p);
+        
+        // Hardcoded Role Assignment on Registration
+        let role = 'staff';
+        if(e === 'thetswe.it@gmail.com') role = 'superadmin';
+        else if(e === 'motherhomesolar@gmail.com') role = 'admin';
+        else {
+            const q = query(collection(db, "users"), limit(1));
+            const snap = await getDocs(q);
+            if(snap.empty) role = 'admin';
+        }
+        
+        await setDoc(doc(db, "users", cred.user.uid), {
+            email: e,
+            role: role,
+            createdAt: serverTimestamp()
+        });
+        alert(`Account created! Role: ${role.toUpperCase()}`);
+    } catch(err) { 
+        console.error(err);
+        if(err.code === 'auth/operation-not-allowed') {
+            alert("CONFIGURATION ERROR:\n\nEmail/Password sign-in is disabled.\n\n1. Go to Firebase Console > Authentication > Sign-in method.\n2. Enable 'Email/Password'.");
+        } else {
+            alert("Registration Error: " + err.message); 
+        }
+    }
+}
+
+window.handleLogout = () => signOut(auth);
+
+function setupUIForUser(email, role) {
+    document.getElementById('userEmailDisplay').innerText = email;
+    document.getElementById('userRoleDisplay').innerText = role.toUpperCase();
+    
+    const isSuperAdmin = role === 'superadmin'; // NEW Check
+    const isAdmin = role === 'admin' || isSuperAdmin; // Admin or Super
+    
+    const isProcurement = role === 'procurement' || isAdmin;
+    const isWarehouse = role === 'warehouse' || isAdmin;
+    const isFinance = role === 'finance' || isAdmin;
+    const isAccountant = role === 'accountant' || isAdmin; // Legacy
+    
+    // Hide all special navs first
+    document.querySelectorAll('.auth-admin-only, .auth-finance-access, .auth-procurement-access, .auth-warehouse-access, .auth-restricted-flow, .auth-create-only, .auth-price-only, .auth-superadmin-only, .auth-supplier-access, .auth-customer-access').forEach(el => el.classList.add('hidden'));
+
+    // SuperAdmin Access
+    if (isSuperAdmin) {
+        document.querySelectorAll('.auth-superadmin-only').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Admin Access
+    if (isAdmin) {
+        document.querySelectorAll('.auth-admin-only').forEach(el => el.classList.remove('hidden'));
+        document.querySelectorAll('.auth-create-only').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Procurement Access
+    if (isProcurement) {
+        document.querySelectorAll('.auth-procurement-access').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Warehouse Access
+    if (isWarehouse) {
+        document.querySelectorAll('.auth-warehouse-access').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Flow Access (Warehouse + Admin + Accountant + Finance)
+    if (isWarehouse || isFinance || isAccountant) {
+        document.querySelectorAll('.auth-restricted-flow').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Price & Finance Access
+    if (isFinance || isAccountant) {
+        document.querySelectorAll('.auth-price-only').forEach(el => el.classList.remove('hidden'));
+        document.querySelectorAll('.auth-finance-access').forEach(el => el.classList.remove('hidden'));
+        document.querySelectorAll('.auth-price-only-field').forEach(el => el.style.display = 'block'); 
+    } else {
+        document.querySelectorAll('.auth-price-only-field').forEach(el => el.style.display = 'none');
+    }
+
+    // Supplier Access (Procurement, Warehouse, Finance)
+    if (isProcurement || isWarehouse || isFinance) {
+        document.querySelectorAll('.auth-supplier-access').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Customer Access (Warehouse, Finance)
+    if (isWarehouse || isFinance) {
+        document.querySelectorAll('.auth-customer-access').forEach(el => el.classList.remove('hidden'));
+    }
+}
+
+// --- VIEW LOGIC ---
+window.showView = (viewId) => {
+    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.classList.add('hidden');
+    });
+    document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+    
+    document.getElementById(viewId).classList.remove('hidden');
+    
+    // Map view to nav ID for active state
+    if(viewId === 'dashboardView') document.getElementById('nav-dashboard').classList.add('active');
+    if(viewId === 'financeView') document.getElementById('nav-finance').classList.add('active');
+    if(viewId === 'inventoryView') document.getElementById('nav-inventory').classList.add('active');
+    if(viewId === 'procurementView') document.getElementById('nav-procure').classList.add('active');
+    if(viewId === 'warehouseView') document.getElementById('nav-warehouse').classList.add('active');
+    if(viewId === 'flowView') document.getElementById('nav-flow').classList.add('active');
+    if(viewId === 'projectUsageView') document.getElementById('nav-usage').classList.add('active');
+    if(viewId === 'usersView') document.getElementById('nav-users').classList.add('active');
+    if(viewId === 'suppliersView') document.getElementById('nav-suppliers').classList.add('active');
+    if(viewId === 'customersView') document.getElementById('nav-customers').classList.add('active');
+
+    if (viewId === 'dashboardView') loadDashboard();
+    if (viewId === 'financeView') loadFinanceView();
+    // Pass FALSE to prevent re-fetching if data exists
+    if (viewId === 'inventoryView') loadInventory(false);
+    if (viewId === 'procurementView' || viewId === 'warehouseView') loadVouchers();
+    if (viewId === 'flowView') loadFlow();
+    if (viewId === 'projectUsageView') loadProjectUsage();
+    if (viewId === 'usersView') loadUsers();
+    if (viewId === 'suppliersView') loadPartiesView('supplier');
+    if (viewId === 'customersView') loadPartiesView('project');
+}
+
+// --- FINANCE LOGIC (New) ---
+window.loadFinanceView = () => {
+    let totalAsset = 0;
+    let potentialSales = 0;
+    let damagedValue = 0;
+    let sortedStock = [...inventory];
+
+    sortedStock.forEach(i => {
+        const cost = Math.round(i.costPrice || 0);
+        const price = Math.round(i.sellingPrice || 0);
+        totalAsset += (i.balance * cost);
+        potentialSales += (i.balance * price);
+        damagedValue += ((i.damagedBalance || 0) * cost);
+    });
+
+    const formatMoney = (num) => Math.round(num).toLocaleString();
+
+    document.getElementById('finTotalValue').innerText = `${formatMoney(totalAsset)} MMK`;
+    document.getElementById('finPotentialSales').innerText = `${formatMoney(potentialSales)} MMK`;
+    document.getElementById('finDamagedValue').innerText = `${formatMoney(damagedValue)} MMK`;
+
+    // Top 10 High Value Items
+    sortedStock.sort((a,b) => ((b.balance * (b.costPrice||0)) - (a.balance * (a.costPrice||0))));
+    const tbody = document.getElementById('finHighValueTable');
+    tbody.innerHTML = '';
+    sortedStock.slice(0,10).forEach(i => {
+        const cost = Math.round(i.costPrice || 0);
+        const total = Math.round(i.balance * cost);
+        tbody.innerHTML += `<tr><td>${i.brand} ${i.model}</td><td>${i.balance}</td><td>${formatMoney(cost)}</td><td class="fw-bold">${formatMoney(total)} MMK</td></tr>`;
+    });
+}
+
+// --- PARTY MANAGEMENT (Suppliers & Projects) ---
+async function loadParties() {
+    parties = [];
+    const q = query(collection(db, "parties"));
+    const snap = await getDocs(q);
+    
+    const supList = document.getElementById('supplierList');
+    const projList = document.getElementById('projectList');
+    if(supList) supList.innerHTML = ''; 
+    if(projList) projList.innerHTML = '';
+    
+    snap.forEach(d => {
+        const p = d.data();
+        parties.push({ id: d.id, ...p });
+        const opt = document.createElement('option');
+        opt.value = p.name;
+        if(p.type === 'supplier') {
+            if(supList) supList.appendChild(opt);
+        }
+        else {
+            if(projList) projList.appendChild(opt);
+        }
+    });
+}
+
+// Load Specific View for Parties
+window.loadPartiesView = (type) => {
+    const tbodyId = type === 'supplier' ? 'suppliersTableBody' : 'customersTableBody';
+    const tbody = document.getElementById(tbodyId);
+    tbody.innerHTML = '';
+    
+    const filtered = parties.filter(p => p.type === type);
+    
+    filtered.forEach(p => {
+        const date = p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : '-';
+        const contact = p.contact || '-'; 
+        const address = p.address || '-';
+
+        const actions = `
+            <button class="btn btn-sm btn-outline-primary me-1" onclick="openPartyModal('${p.type}', '${p.id}')">Edit</button>
+            <button class="btn btn-sm btn-outline-info" onclick="viewPartyHistory('${p.name}')">View</button>
+        `;
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="fw-bold">${p.name}</td>
+                <td></td>
+                <td class="small text-muted"></td>
+                <td></td>
+                <td class="text-end"></td>
+            </tr>
+        `;
+    });
+}
+
+window.exportPartiesCSV = (type) => {
+    const filtered = parties.filter(p => p.type === type);
+    if(filtered.length === 0) return alert("No data to export.");
+    
+    let csv = ["Name,Contact,Address,Added Date"];
+    filtered.forEach(p => {
+        const date = p.createdAt ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : '-';
+        const name = `"${(p.name || '').replace(/"/g, '""')}"`;
+        const contact = `"${(p.contact || '').replace(/"/g, '""')}"`;
+        const address = `"${(p.address || '').replace(/"/g, '""')}"`;
+        csv.push([name, contact, address, date].join(","));
+    });
+    
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `_list_audit.csv`;
+    link.click();
+}
+
+// --- SYSTEM USERS DROPDOWN ---
+async function fetchSystemUsers() {
+    const staffList = [
+        "U Phyo", "U Kyaw Myo Thant", "Ma Zar Zar Naing", "Ma Win Lae Sandar",
+        "Ma Phyo Nandar Min", "Ma Khin Nyein Chan", "Ma Khin Myo Thu",
+        "Ko Ye Thu Min", "Ko Win Htet Paing", "Ko Tun Tun Naing",
+        "Ko Tin Ko Ko Myint", "Ko Thet Paing Tun", "Ko Thant Zin Htwe",
+        "Ko Soe Thiha", "Ko Sai Myat Min Khant", "Ko Phyo Thet Naung",
+        "Ko Phyo Kyaw Kyaw", "Ko Kyaw Zaw Wai", "Ko Bo Hein",
+        "Ko Aung Myo Oo", "Ko Aung Khant Zaw"
+    ];
+
+    const q = query(collection(db, "users"));
+    const snap = await getDocs(q);
+    const dbUsers = [];
+    snap.forEach(d => dbUsers.push(d.data().email));
+    
+    systemUsers = [...new Set([...staffList, ...dbUsers])].sort();
+    populateUserDropdowns();
+}
+
+function populateUserDropdowns() {
+    const req = document.getElementById('voucherReqBy');
+    const app = document.getElementById('voucherAppBy');
+    const ret = document.getElementById('voucherRetBy');
+    const rec = document.getElementById('voucherRecBy');
+    if(!req || !app) return;
+    
+    let html = '<option value="">Select Staff...</option>';
+    systemUsers.forEach(u => html += `<option value=""></option>`);
+    req.innerHTML = html;
+    app.innerHTML = html;
+    if(ret) ret.innerHTML = html;
+    if(rec) rec.innerHTML = html;
+}
+
+// Add New Party from View (Replaced by Modal Trigger)
+window.addNewParty = (type) => {
+    openPartyModal(type);
+}
+
+window.openPartyModal = (type, id = null) => {
+    if (type === 'supplier') {
+        const modal = new bootstrap.Modal(document.getElementById('supplierModal'));
+        document.getElementById('supId').value = id || '';
+        
+        if(id) {
+            const p = parties.find(x => x.id === id);
+            document.getElementById('supName').value = p.name;
+            document.getElementById('supContact').value = p.contact || '';
+            document.getElementById('supAddress').value = p.address || '';
+            document.getElementById('supplierModalTitle').innerText = 'Edit Supplier';
+        } else {
+            document.getElementById('supName').value = '';
+            document.getElementById('supContact').value = '';
+            document.getElementById('supAddress').value = '';
+            document.getElementById('supplierModalTitle').innerText = 'Add New Supplier';
+        }
+        modal.show();
+    } else {
+        // Project / Customer
+        const modal = new bootstrap.Modal(document.getElementById('customerModal'));
+        document.getElementById('custId').value = id || '';
+        
+        if(id) {
+            const p = parties.find(x => x.id === id);
+            document.getElementById('custName').value = p.name;
+            document.getElementById('custContact').value = p.contact || '';
+            document.getElementById('custAddress').value = p.address || '';
+            document.getElementById('customerModalTitle').innerText = 'Edit Customer/Project';
+        } else {
+            document.getElementById('custName').value = '';
+            document.getElementById('custContact').value = '';
+            document.getElementById('custAddress').value = '';
+            document.getElementById('customerModalTitle').innerText = 'Add New Customer/Project';
+        }
+        modal.show();
+    }
+}
+
+window.saveSupplier = async () => {
+    const id = document.getElementById('supId').value;
+    const name = document.getElementById('supName').value.trim();
+    const contact = document.getElementById('supContact').value.trim();
+    const address = document.getElementById('supAddress').value.trim();
+    await processPartySave(id, name, contact, address, 'supplier', 'supplierModal');
+}
+
+window.saveCustomer = async () => {
+    const id = document.getElementById('custId').value;
+    const name = document.getElementById('custName').value.trim();
+    const contact = document.getElementById('custContact').value.trim();
+    const address = document.getElementById('custAddress').value.trim();
+    await processPartySave(id, name, contact, address, 'project', 'customerModal');
+}
+
+async function processPartySave(id, name, contact, address, type, modalId) {
+    if(!name) return alert("Name is required");
+
+    // Check for duplicates (Case-insensitive, excluding current ID if editing)
+    const duplicate = parties.find(p => p.name.toLowerCase() === name.toLowerCase() && p.id !== id);
+    if (duplicate) {
+        return alert(`Error: A ${duplicate.type} named "${duplicate.name}" already exists.`);
+    }
+
+    const data = { name, contact, address, type };
+
+    if(id) {
+        await updateDoc(doc(db, "parties", id), data);
+    } else {
+        if(parties.some(p => p.name.toLowerCase() === name.toLowerCase())) return alert("Name already exists");
+        await addDoc(collection(db, "parties"), { ...data, createdAt: serverTimestamp() });
+    }
+    
+    bootstrap.Modal.getInstance(document.getElementById('partyModal')).hide();
+    bootstrap.Modal.getInstance(document.getElementById(modalId)).hide();
+    await loadParties();
+    loadPartiesView(type);
+
+    // Auto-fill Voucher if open
+    const voucherModal = document.getElementById('voucherModal');
+    if(voucherModal && voucherModal.classList.contains('show')) {
+        document.getElementById('voucherParty').value = name;
+        handleVoucherPartyChange();
+    }
+}
+
+window.viewPartyHistory = (name) => {
+
+    showView('flowView');
+
+    const flowSearchInput = document.getElementById('flowSearchInput');
+    if (flowSearchInput) {
+        flowSearchInput.value = name;
+        filterFlow();
+    }
+}
+
+window.quickAddParty = async () => {
+    const type = document.getElementById('voucherType').value;
+    // Determine type based on voucher context
+    let partyType = 'project'; // default
+    if(type === 'receipt' || type === 'purchase_order') partyType = 'supplier';
+    
+    openPartyModal(partyType);
+}
+
+// --- UNIQUE CODE GENERATOR & DYNAMIC FIELDS ---
+function generateNextCode() {
+    const cat = document.getElementById('itemCategory').value;
+    const brandInput = document.getElementById('itemBrand').value;
+    
+    let prefix = 'GEN'; 
+    if(cat === 'Solar') prefix = 'SOL';
+    else if(cat === 'Battery') prefix = 'BAT';
+    else if(cat === 'Inverter') prefix = 'INV';
+    else if(cat === 'Solar Pumps') prefix = 'PMP';
+    else if(cat === 'Solar Controllers') prefix = 'CTR';
+    else if(cat === 'All-in-One') prefix = 'AIO';
+    else if(cat === 'Powerstations') prefix = 'PWR';
+    else if(cat === 'Audio Systems') prefix = 'AUD';
+    else if(cat === 'AC Accessories') prefix = 'ACC';
+    else if(cat === 'DC Accessories') prefix = 'DCC';
+    else if(cat === 'Breaker Box') prefix = 'BOX';
+    else if(cat === 'Cables and Wiring Accessories') prefix = 'CAB';
+    else if(cat === 'Earthing System Kit') prefix = 'EAR';
+    else if(cat === 'Package') prefix = 'PKG';
+    else if(cat === 'Fixed Assets') prefix = 'FIX';
+    
+    let brandCode = 'GEN';
+    if(brandInput && brandInput.length > 0) {
+        brandCode = brandInput.replace(/[^A-Za-z0-9]/g, '').substring(0, 3).toUpperCase();
+    }
+    
+    const baseCode = `--`;
+    let maxNum = 0;
+    inventory.forEach(i => {
+        if(i.itemCode && i.itemCode.startsWith(baseCode)) {
+            const parts = i.itemCode.split('-');
+            if(parts.length >= 3) {
+                const numStr = parts[parts.length - 1];
+                const num = parseInt(numStr);
+                if(!isNaN(num) && num > maxNum) maxNum = num;
+            }
+        }
+    });
+    
+    const nextNum = String(maxNum + 1).padStart(3, '0');
+    const finalCode = ``;
+    document.getElementById('itemCode').value = finalCode;
+    
+    // Auto-generate QR for preview
+    generateQR(finalCode);
+}
+
+window.handleCategoryChange = () => {
+    generateNextCode();
+    renderSpecFields();
+}
+
+function renderSpecFields(existingSpecs = null) {
+    const cat = document.getElementById('itemCategory').value;
+    const container = document.getElementById('dynamicSpecs');
+    container.innerHTML = '';
+
+    const fields = categoryFieldConfig[cat] || categoryFieldConfig['default'];
+
+    fields.forEach(field => {
+        const col = document.createElement('div');
+        col.className = 'col-md-6';
+        
+        const val = existingSpecs ? (existingSpecs[field.id] || '') : '';
+
+        col.innerHTML = `
+            <label class="form-label small text-secondary">${field.label}</label>
+            <input type="text" class="form-control spec-input" id="${field.id}" placeholder="${field.placeholder}" value="">
+        `;
+        container.appendChild(col);
+    });
+}
+
+// --- DASHBOARD LOGIC (OPTIMIZED) ---
+async function loadDashboard() {
+    // Step 1: Ensure we have inventory data without re-fetching if possible
+    if (!isInventoryLoaded) await loadInventory(false);
+
+    // Step 2: Calculate stats from MEMORY (Zero reads)
+    let totalItems = 0;
+    let lowStock = 0;
+    let liveStockHTML = "";
+
+    inventory.forEach(data => {
+        totalItems++;
+        if(data.balance < 5) lowStock++;
+        liveStockHTML += `<tr><td>${data.brand} ${data.model}</td><td class="text-end fw-bold">${data.balance}</td></tr>`;
+    });
+
+    document.getElementById('dashTotalItems').innerText = totalItems;
+    document.getElementById('dashLowStock').innerText = lowStock;
+    document.getElementById('dashLiveStockBody').innerHTML = liveStockHTML;
+
+    // Pending Requests - This we must fetch, but it's small usually
+    // Only fetch if we haven't fetched recently? No, transactions change often. 
+    // We will fetch vouchers but keep it light.
+    const qVoucher = query(collection(db, "vouchers"), where("status", "==", "draft"));
+    const snapVoucher = await getDocs(qVoucher);
+    let pendingIn = 0;
+    let pendingOut = 0;
+    
+    snapVoucher.forEach(d => {
+        if(d.data().type === 'receipt' || d.data().type === 'return') pendingIn++;
+        else pendingOut++;
+    });
+
+    document.getElementById('dashPendingIn').innerText = pendingIn;
+    document.getElementById('dashPendingOut').innerText = pendingOut;
+}
+
+// --- INVENTORY LOGIC (OPTIMIZED) ---
+async function loadInventory(force = false) {
+    // CRITICAL OPTIMIZATION: Return if already loaded and not forced
+    if (!force && isInventoryLoaded && inventory.length > 0) {
+        console.log("Using cached inventory data");
+        filterInventory(); // Just re-render UI
+        return;
+    }
+
+    console.log("Fetching inventory from Firestore...");
+    toggleLoading(true);
+    inventory = [];
+    const q = query(collection(db, "inventory"), orderBy("category"));
+    const snap = await getDocs(q);
+    
+    const datalist = document.getElementById('inventoryList'); // For modal search
+    if(datalist) datalist.innerHTML = '';
+
+    snap.forEach(d => {
+        const data = d.data();
+        inventory.push({ id: d.id, ...data });
+        
+        if(datalist) {
+            const opt = document.createElement('option');
+            opt.value = data.itemCode;
+            opt.innerText = `${data.brand} ${data.model} [${data.balance}]`;
+            datalist.appendChild(opt);
+        }
+    });
+    
+    isInventoryLoaded = true; // Mark as loaded
+    document.getElementById('cacheStatus').innerText = "Data Loaded: " + new Date().toLocaleTimeString();
+    
+    filterInventory();
+    toggleLoading(false);
+}
+
+window.filterInvByCat = (cat, el) => {
+    currentCategoryFilter = cat;
+    document.querySelectorAll('#invTabs .nav-link').forEach(n => n.classList.remove('active'));
+    el.classList.add('active');
+    filterInventory();
+}
+
+window.setCategoryTab = (cat, el) => {
+    currentCategoryFilter = cat;
+    // Update UI
+    document.querySelectorAll('.cat-tab-item').forEach(element => element.classList.remove('active'));
+    el.classList.add('active');
+    filterInventory();
+}
+
+window.filterInventory = () => {
+    const s = document.getElementById('searchInput').value.toLowerCase().trim();
+    
+    // --- QR SCAN LOGIC (Exact Match) ---
+    const exactMatch = inventory.find(i => i.itemCode && i.itemCode.toLowerCase() === s);
+    
+    const filtered = inventory.filter(i => {
+        // Construct a comprehensive search string including specs
+        let specStr = "";
+        if (i.specs) specStr = Object.values(i.specs).join(" ");
+        else if (i.spec) specStr = i.spec;
+        
+        // Combine Code, Brand, Model, Category, and Specs for searching
+        const matchText = `${i.itemCode} ${i.brand} ${i.model} ${i.category} `.toLowerCase();
+        
+        const matchSearch = matchText.includes(s);
+        const matchCat = currentCategoryFilter === 'All' || i.category === currentCategoryFilter;
+        return matchSearch && matchCat;
+    });
+
+    const isAccountant = (currentUserRole === 'admin' || currentUserRole === 'accountant' || currentUserRole === 'superadmin' || currentUserRole === 'finance');
+    const tbody = document.getElementById('inventoryTableBody');
+
+    let totalVal = 0;
+    let totalQty = 0;
+    let rowsHtml = '';
+
+    // Currency Formatting Helper
+    const formatMoney = (num) => Math.round(num).toLocaleString();
+
+    filtered.forEach(item => {
+        const cost = isAccountant ? (item.costPrice || 0) : 0;
+        const price = isAccountant ? (item.sellingPrice || 0) : 0;
+        // No $ symbol, No decimals, With comma
+        const priceCells = isAccountant ? `<td>${formatMoney(cost)}</td><td>${formatMoney(price)}</td>` : '<td class="hidden"></td><td class="hidden"></td>';
+        const bal = item.balance || 0;
+
+        // Aggregate totals for the filtered view
+        totalQty += bal;
+        totalVal += (bal * cost);
+
+        // Show specs as key-value pairs
+        let details = `<div class="fw-bold text-dark">${item.brand}</div><small class="text-muted">${item.model}</small>`;
+        if(item.specs) {
+            details += '<div class="mt-1" style="font-size:0.75rem;">';
+            for (const [key, value] of Object.entries(item.specs)) {
+                let label = key.replace('spec_', '').toUpperCase(); 
+                details += `<span class="badge bg-light text-secondary border me-1">: </span>`;
+            }
+            details += '</div>';
+        } else if(item.spec) {
+            details += `<br><span class="badge bg-secondary bg-opacity-25 text-secondary text-wrap text-start" style="font-weight:normal;">${item.spec}</span>`;
+        }
+
+        let actions = `<button class="btn btn-sm btn-outline-primary" onclick="openItemModal('${item.id}')">Edit</button>`;
+        
+        // Highlight row if exact match
+        const highlightClass = (exactMatch && exactMatch.id === item.id) ? 'table-info border-start border-5 border-info' : '';
+        
+        rowsHtml += `
+            <tr class="">
+                <td class="fw-bold text-primary">${item.itemCode || '-'}</td>
+                <td><span class="badge bg-light text-secondary border">${item.category}</span></td>
+                <td></td>
+                <td class="text-center">
+                    <span class="badge bg-indigo text-white" style="background-color: #6610f2;">${item.balance} ${item.unit || ''}</span>
+                </td>
+                <td class="text-center text-danger small">${item.damagedBalance || 0}</td>
+                
+                <td class="text-end"></td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = rowsHtml;
+
+    // Update Total Value Display based on filtered items
+    // No $, Add MMK, No decimals, Comma separated
+    const valDisplay = document.getElementById('totalValueDisplay');
+    if(valDisplay) valDisplay.innerText = `${formatMoney(totalVal)} MMK`;
+
+    // Show "Found X items" help text
+    const helpEl = document.getElementById('searchResultHelp');
+    if(helpEl) {
+        if(s.length > 0) {
+            helpEl.classList.remove('hidden');
+            helpEl.innerHTML = `<i class="fas fa-filter me-1"></i> Found <strong>${filtered.length}</strong> distinct items matching "" | Total Stock Qty: <span class="badge bg-warning text-dark"></span>`;
+        } else {
+            helpEl.classList.add('hidden');
+        }
+    }
+}
+
+// --- QR CODE GENERATION (SINGLE) ---
+function generateQR(code) {
+    const container = document.getElementById('qrCodeContainer');
+    if (!container) return; // Guard clause
+    
+    container.innerHTML = ''; // Clear previous
+    if(code) {
+        new QRCode(container, {
+            text: window.location.origin + window.location.pathname + '?code=' + code,
+            width: 100,
+            height: 100,
+            colorDark : "#000000",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+    } else {
+        container.innerHTML = '<span class="text-muted small">No Code</span>';
+    }
+}
+
+function printSingleQRCode() {
+    const itemCode = document.getElementById('itemCode').value;
+    const itemBrand = document.getElementById('itemBrand').value;
+    const itemModel = document.getElementById('itemModel').value;
+    const qrContent = document.getElementById('qrCodeContainer').innerHTML;
+
+    if(!itemCode || !qrContent) return alert("Please save item to generate code first.");
+
+    const printWindow = window.open('', '', 'height=500,width=500');
+    printWindow.document.write('<html><head><title>Print Label</title>');
+    printWindow.document.write('<style>');
+    printWindow.document.write('@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap");');
+    printWindow.document.write('body{font-family: "Inter", sans-serif; text-align: center; padding: 20px;}');
+    printWindow.document.write('.label{border: 2px solid #000; padding: 15px; display: inline-block; width: 300px; border-radius: 10px;}');
+    printWindow.document.write('h2{margin: 10px 0 5px 0; font-size: 24px;}');
+    printWindow.document.write('p{margin: 0; font-size: 14px; color: #555;}');
+    printWindow.document.write('</style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write('<div class="label">');
+    printWindow.document.write(qrContent); 
+    printWindow.document.write(`<h2></h2>`);
+    printWindow.document.write(`<p> - </p>`);
+    printWindow.document.write('</div>');
+    printWindow.document.write('<script>window.onload = function() { window.print(); window.close(); }<\/script>');
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+}
+
+window.openItemModal = (id=null) => {
+    const voucherModalEl = document.getElementById('voucherModal');
+    if(voucherModalEl && voucherModalEl.classList.contains('show')) {
+            bootstrap.Modal.getInstance(voucherModalEl).hide();
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('itemModal'));
+    
+    const balanceInput = document.getElementById('itemBalance');
+    const balanceHelp = document.getElementById('itemBalanceHelp');
+    
+    if (currentUserRole !== 'admin' && currentUserRole !== 'superadmin') {
+        balanceInput.setAttribute('disabled', 'true');
+        balanceHelp.innerText = "(Admin Only)";
+    } else {
+        balanceInput.removeAttribute('disabled');
+        balanceHelp.innerText = "";
+    }
+
+    if(id) {
+        const item = inventory.find(i => i.id === id);
+        document.getElementById('itemId').value = id;
+        document.getElementById('itemCode').value = item.itemCode;
+        document.getElementById('itemCategory').value = item.category;
+        document.getElementById('itemBrand').value = item.brand;
+        document.getElementById('itemModel').value = item.model;
+        document.getElementById('itemUnit').value = item.unit || 'Pcs';
+        document.getElementById('itemBalance').value = item.balance;
+        document.getElementById('itemRemark').value = item.remark || '';
+        document.getElementById('itemCost').value = item.costPrice || 0;
+        document.getElementById('itemPrice').value = item.sellingPrice || 0;
+        
+        renderSpecFields(item.specs || {}); 
+        generateQR(item.itemCode); // Generate QR for existing item
+    } else {
+        document.getElementById('itemId').value = '';
+        document.getElementById('itemCode').value = '';
+        document.getElementById('itemBalance').value = 0;
+        document.getElementById('itemBrand').value = '';
+        document.getElementById('itemModel').value = '';
+        document.getElementById('qrCodeContainer').innerHTML = ''; // Clear QR
+        handleCategoryChange(); 
+    }
+    modal.show();
+}
+
+window.saveItem = async () => {
+    const id = document.getElementById('itemId').value;
+    const itemCode = document.getElementById('itemCode').value.trim();
+    
+    if (!itemCode) return alert("Item Code is required");
+
+    // Unique Check
+    const duplicate = inventory.find(i => i.itemCode === itemCode && i.id !== id);
+    if(duplicate) {
+        return alert(`Duplicate Item Code detected!\nCode: \nExisting Item: ${duplicate.brand} ${duplicate.model}`);
+    }
+
+    const category = document.getElementById('itemCategory').value;
+    
+    // Harvest Dynamic Specs
+    const specs = {};
+    const specInputs = document.querySelectorAll('.spec-input');
+    let specStringParts = [];
+    
+    specInputs.forEach(input => {
+        if(input.value.trim()) {
+            specs[input.id] = input.value.trim();
+            specStringParts.push(input.value.trim());
+        }
+    });
+    const specString = specStringParts.join(', ');
+
+    const data = {
+        itemCode: itemCode,
+        category: category,
+        brand: document.getElementById('itemBrand').value,
+        model: document.getElementById('itemModel').value,
+        spec: specString, 
+        specs: specs,
+        unit: document.getElementById('itemUnit').value,
+        balance: parseFloat(document.getElementById('itemBalance').value) || 0,
+        remark: document.getElementById('itemRemark').value,
+        // Ensure integer storage for money values
+        costPrice: Math.round(parseFloat(document.getElementById('itemCost').value)) || 0,
+        sellingPrice: Math.round(parseFloat(document.getElementById('itemPrice').value)) || 0,
+        updatedBy: currentUser.email
+    };
+
+    if(id) {
+        await updateDoc(doc(db, "inventory", id), data);
+        // Local Update to save Read Quota
+        const index = inventory.findIndex(i => i.id === id);
+        if(index !== -1) inventory[index] = { id, ...data, damagedBalance: inventory[index].damagedBalance || 0 };
+    } else {
+        const docRef = await addDoc(collection(db, "inventory"), { ...data, createdAt: serverTimestamp(), damagedBalance: 0 });
+        // Local Update
+        inventory.push({ id: docRef.id, ...data, damagedBalance: 0 });
+    }
+    
+    // Update QR
+    generateQR(data.itemCode);
+
+    bootstrap.Modal.getInstance(document.getElementById('itemModal')).hide();
+    // Do NOT call loadInventory() here, just filter
+    filterInventory();
+}
+
+// --- SEED DUMMY DATA ---
+window.seedDatabase = async () => {
+    if(!confirm("Create comprehensive dummy items for ALL categories?")) return;
+    toggleLoading(true);
+    
+    const standardItems = [
+        // 1. Solar
+        { 
+            cat: "Solar", brand: "Jinko", model: "Tiger Pro", code: "SOL-JIN-001", 
+            specStr: "590W, Monofacial", 
+            specs: {spec_watt: "590W", spec_type: "Monofacial"} 
+        },
+        // 2. Battery
+        { 
+            cat: "Battery", brand: "Sharktopsun", model: "Rack Battery", code: "BAT-SHA-001", 
+            specStr: "51.2V, 304AH", 
+            specs: {spec_volt: "51.2V", spec_amp: "304AH", spec_chem: "LFP"} 
+        },
+        // 3. Inverter
+        { 
+            cat: "Inverter", brand: "Growatt", model: "SPF 5000", code: "INV-GRO-001", 
+            specStr: "5KW, Single Phase", 
+            specs: {spec_power: "5KW", spec_phase: "Single Phase", spec_type: "Off-grid"} 
+        },
+        // 4. Solar Pumps
+        { 
+            cat: "Solar Pumps", brand: "Handuro", model: "HD-Surface", code: "PMP-HAN-001", 
+            specStr: "2HP, 100m Head", 
+            specs: {spec_power: "2HP", spec_head: "100m", spec_flow: "5 m3/h"} 
+        },
+        // 5. Solar Controllers
+        { 
+            cat: "Solar Controllers", brand: "PowMr", model: "MPPT-60", code: "CTR-POW-001", 
+            specStr: "60A, 12/24/48V", 
+            specs: {spec_amp: "60A", spec_volt: "12/24/48V", spec_type: "MPPT"} 
+        },
+        // 6. All-in-One
+        { 
+            cat: "All-in-One", brand: "Deye", model: "Sun-ESS", code: "AIO-DEY-001", 
+            specStr: "5KW Inv, 10kWh Batt", 
+            specs: {spec_inv: "5KW", spec_batt: "10kWh"} 
+        },
+        // 7. Powerstations
+        { 
+            cat: "Powerstations", brand: "EcoFlow", model: "Delta 2", code: "PWR-ECO-001", 
+            specStr: "1024Wh, 1800W Out", 
+            specs: {spec_cap: "1024Wh", spec_out: "1800W"} 
+        },
+        // 8. Audio Systems
+        { 
+            cat: "Audio Systems", brand: "SolarSound", model: "Garden Speaker", code: "AUD-SOL-001", 
+            specStr: "50W, Bluetooth", 
+            specs: {spec_watt: "50W", spec_type: "Outdoor Wireless"} 
+        },
+        // 9. AC Accessories
+        { 
+            cat: "AC Accessories", brand: "Schneider", model: "Acti9", code: "ACC-SCH-001", 
+            specStr: "32A, 2 Pole MCB", 
+            specs: {spec_amp: "32A", spec_type: "MCB 2P"} 
+        },
+        // 10. DC Accessories
+        { 
+            cat: "DC Accessories", brand: "Suntree", model: "SR-63", code: "DCC-SUN-001", 
+            specStr: "63A, DC Breaker", 
+            specs: {spec_amp: "63A", spec_type: "DC Fuse"} 
+        },
+        // 11. Breaker Box
+        { 
+            cat: "Breaker Box", brand: "Suntree", model: "Combiner 12", code: "BOX-SUN-001", 
+            specStr: "12 Way, Waterproof", 
+            specs: {spec_way: "12 Way", spec_type: "Combiner Box"} 
+        },
+        // 12. Cables
+        { 
+            cat: "Cables and Wiring Accessories", brand: "PNN", model: "Solar Cable", code: "CAB-PNN-001", 
+            specStr: "4mm, Red, 1 Core", 
+            specs: {spec_size: "4mm", spec_core: "1 Core", spec_color: "Red"} 
+        },
+        // 13. Earthing
+        { 
+            cat: "Earthing System Kit", brand: "Generic", model: "Copper Rod", code: "EAR-GEN-001", 
+            specStr: "Copper, 1.5m", 
+            specs: {spec_mat: "Copper", spec_dim: "1.5m x 16mm"} 
+        },
+        // 14. Packages
+        { 
+            cat: "Package", brand: "MH Solar", model: "Home Starter", code: "PKG-MH-001", 
+            specStr: "3KW System Kit", 
+            specs: {spec_detail: "3KW Inv + 5kWh Batt + 6 Panels"} 
+        },
+        // 15. Fixed Assets
+        { 
+            cat: "Fixed Assets", brand: "Toyota", model: "Forklift", code: "FIX-TOY-001", 
+            specStr: "Warehouse Lifter", 
+            specs: {spec_detail: "3 Ton Capacity"} 
+        }
+    ];
+
+    let count = 0;
+    for(const item of standardItems) {
+        const exists = inventory.find(i => i.itemCode === item.code);
+        if(!exists) {
+            await addDoc(collection(db, "inventory"), {
+                itemCode: item.code,
+                category: item.cat,
+                brand: item.brand,
+                model: item.model,
+                spec: item.specStr,
+                specs: item.specs,
+                unit: "Pcs",
+                balance: 10, 
+                damagedBalance: 0,
+                costPrice: 100, // Int
+                sellingPrice: 120, // Int
+                remark: "Example Item",
+                createdAt: serverTimestamp()
+            });
+            count++;
+        }
+    }
+
+    toggleLoading(false);
+    alert(`Database seeded with  new example items for all categories.`);
+    bootstrap.Modal.getInstance(document.getElementById('groundStockModal')).hide();
+    loadInventory(true);
+}
+
+// --- FULL DEMO DATA GENERATION ---
+window.generateDemoData = async () => {
+    if(!confirm("Warning: This will populate the system with dummy Suppliers, Customers, Inventory, Vouchers and Transactions. Continue?")) return;
+    toggleLoading(true);
+
+    try {
+        // 1. Create Parties
+        const suppliers = ["Jinko Solar Official", "Growatt Distributor", "Schneider Electric MM"];
+        const customers = ["Mandalay Project A", "Yangon Factory B", "Naypyitaw Ministry"];
+        
+        for(const s of suppliers) {
+            if(!parties.some(p => p.name === s)) await addDoc(collection(db, "parties"), { name: s, type: 'supplier', createdAt: serverTimestamp() });
+        }
+        for(const c of customers) {
+            if(!parties.some(p => p.name === c)) await addDoc(collection(db, "parties"), { name: c, type: 'project', createdAt: serverTimestamp() });
+        }
+        await loadParties(); // Refresh local list
+
+        // 2. Ensure Inventory Exists (Run Seed)
+        const standardItems = [
+            { cat: "Solar", brand: "Jinko", model: "Tiger Pro", code: "SOL-JIN-001", spec: "590W, Monofacial", specs: {spec_watt: "590W"} },
+            { cat: "Inverter", brand: "Growatt", model: "SPF 5000", code: "INV-GRO-001", spec: "5KW, Single Phase", specs: {spec_power: "5KW"} }
+        ];
+        
+        // Check and add if missing (Simplified seed)
+        for(const item of standardItems) {
+            if(!inventory.some(i => i.itemCode === item.code)) {
+                await addDoc(collection(db, "inventory"), {
+                    itemCode: item.code, category: item.cat, brand: item.brand, model: item.model,
+                    spec: item.spec, specs: item.specs, unit: "Pcs", balance: 50, damagedBalance: 0,
+                    costPrice: 100, sellingPrice: 120, remark: "Demo Item", createdAt: serverTimestamp()
+                });
+            }
+        }
+        await loadInventory(true); // Refresh inventory
+
+        // 3. Create Vouchers & Transactions
+        // PO
+        await addDoc(collection(db, "vouchers"), {
+            type: 'purchase_order', party: 'Jinko Solar Official', date: new Date().toISOString().slice(0,10),
+            ref: 'PO-DEMO-001', status: 'ordered', items: [{itemId: inventory[0]?.id, itemCode: 'SOL-JIN-001', itemName: 'Jinko Tiger Pro', qty: 100}],
+            createdAt: serverTimestamp(), createdBy: currentUser.email
+        });
+
+        // Receipt (GRN) - Updates Stock
+        const grnRef = await addDoc(collection(db, "vouchers"), {
+            type: 'receipt', party: 'Jinko Solar Official', date: new Date().toISOString().slice(0,10),
+            ref: 'GRN-DEMO-001', status: 'approved', items: [{itemId: inventory[0]?.id, itemCode: 'SOL-JIN-001', itemName: 'Jinko Tiger Pro', qty: 50}],
+            createdAt: serverTimestamp(), createdBy: currentUser.email
+        });
+        // Update Stock for GRN
+        if(inventory[0]) {
+            const newBal = (inventory[0].balance || 0) + 50;
+            await updateDoc(doc(db, "inventory", inventory[0].id), { balance: newBal });
+            await addDoc(collection(db, "transactions"), {
+                date: serverTimestamp(), type: 'in', subType: 'receipt', itemId: inventory[0].id,
+                itemName: 'Jinko Tiger Pro', qty: 50, party: 'Jinko Solar Official', ref: 'GRN-DEMO-001', user: currentUser.email
+            });
+        }
+
+        // Request (Out)
+        const reqRef = await addDoc(collection(db, "vouchers"), {
+            type: 'request', party: 'Mandalay Project A', date: new Date().toISOString().slice(0,10),
+            ref: 'REQ-DEMO-001', status: 'approved', items: [{itemId: inventory[0]?.id, itemCode: 'SOL-JIN-001', itemName: 'Jinko Tiger Pro', qty: 10}],
+            reqBy: 'Ko Mg Mg', appBy: 'U Ba', createdAt: serverTimestamp(), createdBy: currentUser.email
+        });
+        // Update Stock for Request
+        if(inventory[0]) {
+            const currentBal = (inventory[0].balance || 0) + 50; // Previous +50
+            await updateDoc(doc(db, "inventory", inventory[0].id), { balance: currentBal - 10 });
+            await addDoc(collection(db, "transactions"), {
+                date: serverTimestamp(), type: 'out', subType: 'request', itemId: inventory[0].id,
+                itemName: 'Jinko Tiger Pro', qty: 10, party: 'Mandalay Project A', ref: 'REQ-DEMO-001', user: currentUser.email
+            });
+        }
+
+        alert("Demo Data Generated Successfully!");
+        loadDashboard(); // Refresh UI
+        loadVouchers();
+        loadFlow();
+
+    } catch(e) {
+        console.error(e);
+        alert("Error generating demo data: " + e.message);
+    }
+    toggleLoading(false);
+}
+
+// --- PACKAGE BUILDER LOGIC ---
+window.openPackageBuilder = () => {
+    document.getElementById('pkgBrand').value = '';
+    document.getElementById('pkgModel').value = '';
+    document.getElementById('pkgCode').value = 'PKG-' + Math.floor(1000 + Math.random() * 9000);
+    document.getElementById('pkgQty').value = 1;
+    document.getElementById('pkgCost').value = '0';
+    document.getElementById('packageItemsBody').innerHTML = '';
+    addPackageRow();
+    new bootstrap.Modal(document.getElementById('packageModal')).show();
+}
+
+window.addPackageRow = () => {
+    const row = `
+        <tr>
+            <td><input type="text" class="form-control form-control-sm pkg-item-search" list="inventoryList" placeholder="Search Component..." onchange="calcPkgCost(this)"></td>
+            <td><input type="number" class="form-control form-control-sm pkg-qty" value="1" min="1" onchange="calcPkgCost(this)"></td>
+            <td><button class="btn btn-sm text-danger" onclick="this.closest('tr').remove(); calcPkgCost();"><i class="fas fa-times"></i></button></td>
+        </tr>
+    `;
+    document.getElementById('packageItemsBody').insertAdjacentHTML('beforeend', row);
+}
+
+window.calcPkgCost = () => {
+    let total = 0;
+    document.querySelectorAll('#packageItemsBody tr').forEach(tr => {
+        const code = tr.querySelector('.pkg-item-search').value;
+        const qty = parseFloat(tr.querySelector('.pkg-qty').value) || 0;
+        const item = inventory.find(i => i.itemCode === code);
+        if(item) total += (item.costPrice || 0) * qty;
+    });
+    document.getElementById('pkgCost').value = Math.round(total);
+}
+
+window.assemblePackage = async () => {
+    const buildQty = parseInt(document.getElementById('pkgQty').value) || 0;
+    if(buildQty <= 0) return alert("Quantity must be > 0");
+
+    const components = [];
+    const rows = document.querySelectorAll('#packageItemsBody tr');
+    for(let row of rows) {
+        const code = row.querySelector('.pkg-item-search').value;
+        const qtyPer = parseFloat(row.querySelector('.pkg-qty').value) || 0;
+        const item = inventory.find(i => i.itemCode === code);
+        if(!item) return alert(`Invalid component: `);
+        if(item.balance < (qtyPer * buildQty)) return alert(`Insufficient stock for . Need ${qtyPer * buildQty}, Have ${item.balance}`);
+        components.push({ item, totalQty: qtyPer * buildQty });
+    }
+
+    if(components.length === 0) return alert("Add components first.");
+    if(!confirm(`Assemble  units? This will deduct components from stock.`)) return;
+
+    toggleLoading(true);
+    try {
+        // 1. Deduct Components
+        for(let c of components) {
+            const newBal = c.item.balance - c.totalQty;
+            await updateDoc(doc(db, "inventory", c.item.id), { balance: newBal });
+            // Update Local
+            const idx = inventory.findIndex(i => i.id === c.item.id);
+            if(idx !== -1) inventory[idx].balance = newBal;
+        }
+
+        // 2. Create/Update Output Item
+        const pkgCode = document.getElementById('pkgCode').value;
+        const pkgData = {
+            itemCode: pkgCode,
+            category: document.getElementById('pkgCategory').value,
+            brand: document.getElementById('pkgBrand').value,
+            model: document.getElementById('pkgModel').value,
+            costPrice: parseFloat(document.getElementById('pkgCost').value),
+            sellingPrice: 0, // User can set later
+            unit: 'Set',
+            remark: 'Assembled via Builder'
+        };
+
+        let pkgItem = inventory.find(i => i.itemCode === pkgCode);
+        if(pkgItem) {
+            const newBal = (pkgItem.balance || 0) + buildQty;
+            await updateDoc(doc(db, "inventory", pkgItem.id), { balance: newBal, costPrice: pkgData.costPrice });
+            // Local
+            const idx = inventory.findIndex(i => i.id === pkgItem.id);
+            inventory[idx].balance = newBal;
+        } else {
+            const ref = await addDoc(collection(db, "inventory"), { ...pkgData, balance: buildQty, damagedBalance: 0, createdAt: serverTimestamp() });
+            inventory.push({ id: ref.id, ...pkgData, balance: buildQty });
+        }
+
+        // 3. Log Transaction
+        await addDoc(collection(db, "transactions"), {
+            date: serverTimestamp(), type: 'in', subType: 'assembly', 
+            itemName: pkgData.brand + " " + pkgData.model, qty: buildQty, 
+            party: 'Assembly', user: currentUser.email
+        });
+
+        alert("Assembly Complete!");
+        bootstrap.Modal.getInstance(document.getElementById('packageModal')).hide();
+        filterInventory();
+    } catch(e) {
+        console.error(e);
+        alert("Error during assembly: " + e.message);
+    }
+    toggleLoading(false);
+}
+
+// --- VOUCHER SYSTEM ---
+window.openVoucherModal = (type) => {
+    document.getElementById('voucherType').value = type;
+    document.getElementById('relatedPoId').value = ''; 
+    
+    const titleEl = document.getElementById('voucherModalTitle');
+    const partyLabel = document.getElementById('voucherPartyLabel');
+    const actionDiv = document.getElementById('voucherActions');
+    const partyInput = document.getElementById('voucherParty');
+    partyInput.onchange = handleVoucherPartyChange;
+    
+    actionDiv.innerHTML = `<button type="button" class="btn btn-primary px-4" onclick="saveVoucher(false)">Save Draft</button>`;
+    
+    if (type === 'receipt' || type === 'purchase_order') {
+        partyInput.setAttribute('list', 'supplierList');
+    } else if (type === 'request' || type === 'return' || type === 'damage_return') {
+        partyInput.setAttribute('list', 'projectList');
+    }
+
+    if (type === 'receipt') {
+        titleEl.innerText = "Goods Receipt Note (GRN)";
+        partyLabel.innerText = "Supplier";
+        if (currentUserRole === 'warehouse' || currentUserRole === 'admin' || currentUserRole === 'superadmin') {
+            actionDiv.innerHTML += `<button type="button" class="btn btn-success ms-2 px-4" onclick="saveVoucher(true)">Save & Process (Stock In)</button>`;
+        }
+    } else if (type === 'request') {
+        titleEl.innerText = "Stock Issue Note (Request)";
+        partyLabel.innerText = "Project / Customer";
+        if (currentUserRole === 'warehouse' || currentUserRole === 'admin' || currentUserRole === 'superadmin') {
+            actionDiv.innerHTML += `<button type="button" class="btn btn-warning text-white ms-2 px-4" onclick="saveVoucher(true)">Save & Process (Stock Out)</button>`;
+        }
+    } else if (type === 'return') {
+        titleEl.innerText = "Material Return Note (Good)";
+        partyLabel.innerText = "Project Name";
+        if (currentUserRole === 'warehouse' || currentUserRole === 'admin' || currentUserRole === 'superadmin') {
+            actionDiv.innerHTML += `<button type="button" class="btn btn-success ms-2 px-4" onclick="saveVoucher(true)">Save & Process (Stock In)</button>`;
+        }
+    } else if (type === 'damage_return') {
+        titleEl.innerText = "Material Return Note (Damage)";
+        partyLabel.innerText = "Project Name";
+        if (currentUserRole === 'warehouse' || currentUserRole === 'admin' || currentUserRole === 'superadmin') {
+            actionDiv.innerHTML += `<button type="button" class="btn btn-danger ms-2 px-4" onclick="saveVoucher(true)">Save & Process (Damage In)</button>`;
+        }
+    } else if (type === 'purchase_order') {
+        titleEl.innerText = "Purchase Order (PO)";
+        partyLabel.innerText = "Supplier";
+    } else if (type === 'purchase_request') {
+        titleEl.innerText = "Purchase Request (Internal)";
+        partyLabel.innerText = "Suggested Supplier (Optional)";
+    }
+    
+    const reqFields = document.getElementById('requestFields');
+    const returnFields = document.getElementById('returnFields');
+    
+    reqFields.classList.add('hidden');
+    returnFields.classList.add('hidden');
+    
+    if(type === 'request' || type === 'purchase_order' || type === 'purchase_request') {
+        reqFields.classList.remove('hidden');
+    } else if (type === 'return' || type === 'damage_return') {
+        returnFields.classList.remove('hidden');
+    }
+    
+    document.getElementById('voucherItemsBody').innerHTML = '';
+    addVoucherItemRow();
+    new bootstrap.Modal(document.getElementById('voucherModal')).show();
+}
+
+window.addVoucherItemRow = (prefillData = null) => {
+    const type = document.getElementById('voucherType').value;
+    const listId = (type === 'return' || type === 'damage_return') ? 'returnableItemList' : 'inventoryList';
+
+    const itemVal = prefillData ? prefillData.itemCode : '';
+    const qtyVal = prefillData ? prefillData.qty : 1;
+    const serialVal = prefillData ? (prefillData.serials || '') : '';
+    
+    const row = `
+        <tr>
+            <td><input type="text" class="form-control form-control-sm item-search bg-white" list="" placeholder="Search Item Code" value=""></td>
+            <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="" oninput="this.value = Math.abs(this.value)"></td>
+            <td><input type="text" class="form-control form-control-sm serial-input bg-white" placeholder="S/N (Optional)" value=""></td>
+            <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
+        </tr>
+    `;
+    document.getElementById('voucherItemsBody').insertAdjacentHTML('beforeend', row);
+}
+
+window.handleVoucherPartyChange = async () => {
+    const type = document.getElementById('voucherType').value;
+    const party = document.getElementById('voucherParty').value;
+    
+    if ((type === 'return' || type === 'damage_return') && party) {
+        toggleLoading(true);
+        const list = document.getElementById('returnableItemList');
+        list.innerHTML = '';
+        
+        // Fetch transactions for this party to determine returnable items
+        const q = query(collection(db, "transactions"), where("party", "==", party));
+        const snap = await getDocs(q);
+        
+        const usageMap = {};
+        snap.forEach(d => {
+            const t = d.data();
+            if (!t.itemId) return;
+            const invItem = inventory.find(i => i.id === t.itemId);
+            const code = invItem ? invItem.itemCode : 'UNKNOWN';
+            
+            if (!usageMap[code]) usageMap[code] = { qty: 0, name: t.itemName };
+            
+            if (t.type === 'out') usageMap[code].qty += t.qty;
+            if (t.type === 'in') usageMap[code].qty -= t.qty;
+        });
+        
+        Object.keys(usageMap).forEach(code => {
+            if (usageMap[code].qty > 0) {
+                const opt = document.createElement('option');
+                opt.value = code;
+                opt.innerText = `${usageMap[code].name} (Site Bal: ${usageMap[code].qty})`;
+                list.appendChild(opt);
+            }
+        });
+        toggleLoading(false);
+    }
+}
+
+window.saveVoucher = async (autoProcess = false) => {
+    const type = document.getElementById('voucherType').value;
+    const party = document.getElementById('voucherParty').value;
+    const date = document.getElementById('voucherDate').value;
+    const ref = document.getElementById('voucherLetterRef')?.value || '';
+    const relatedPoId = document.getElementById('relatedPoId').value;
+    
+    const rows = document.querySelectorAll('#voucherItemsBody tr');
+    let items = [];
+    for(let row of rows) {
+        const code = row.querySelector('.item-search').value;
+        const qtyInput = row.querySelector('.qty-input');
+        const serialInput = row.querySelector('.serial-input');
+        const qty = parseInt(qtyInput.value);
+        
+        // Negative Check
+        if(qty <= 0 || isNaN(qty)) {
+            qtyInput.style.border = "1px solid red";
+            return alert("Quantity must be a positive number.");
+        }
+
+        const item = inventory.find(i => i.itemCode === code);
+        
+        if(item && qty > 0) {
+            items.push({ 
+                itemId: item.id, 
+                itemCode: item.itemCode, 
+                itemName: `${item.brand} ${item.model}`,
+                qty: qty, 
+                serials: serialInput ? serialInput.value.trim() : ''
+            });
+        }
+    }
+
+    if(items.length === 0) return alert("No valid items selected");
+
+    // --- PO VALIDATION LOGIC ---
+    const retBy = document.getElementById('voucherRetBy')?.value;
+    const recBy = document.getElementById('voucherRecBy')?.value;
+    if ((type === 'return' || type === 'damage_return') && retBy && recBy && retBy === recBy) {
+        return alert("Returned By and Received By cannot be the same person.");
+    }
+    
+    // --- RETURN VALIDATION: Check if project actually has these items ---
+    if (type === 'return' || type === 'damage_return') {
+        toggleLoading(true);
+        const q = query(collection(db, "transactions"), where("party", "==", party));
+        const snap = await getDocs(q);
+        const usageMap = {};
+        snap.forEach(d => {
+            const t = d.data();
+            if (!t.itemId) return;
+            const invItem = inventory.find(i => i.id === t.itemId);
+            const code = invItem ? invItem.itemCode : 'UNKNOWN';
+            if (!usageMap[code]) usageMap[code] = 0;
+            if (t.type === 'out') usageMap[code] += t.qty;
+            if (t.type === 'in') usageMap[code] -= t.qty;
+        });
+        
+        for(let item of items) {
+            const siteBal = usageMap[item.itemCode] || 0;
+            if (item.qty > siteBal) {
+                toggleLoading(false);
+                return alert(`Invalid Return! Project '' only has  of ${item.itemCode}. You tried to return ${item.qty}.`);
+            }
+        }
+        toggleLoading(false);
+    }
+
+    if(relatedPoId && type === 'receipt') {
+        toggleLoading(true);
+        try {
+            const poDoc = await getDoc(doc(db, "vouchers", relatedPoId));
+            const po = poDoc.data();
+            
+            // Get history
+            const q = query(collection(db, "vouchers"), where("relatedPoId", "==", relatedPoId), where("type", "==", "receipt"));
+            const snap = await getDocs(q);
+            let receivedMap = {};
+            snap.forEach(d => {
+                d.data().items.forEach(i => { receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty; });
+            });
+
+            // Check Limits
+            for(let newItem of items) {
+                const orderedItem = po.items.find(pi => pi.itemCode === newItem.itemCode);
+                if(orderedItem) {
+                    const alreadyReceived = receivedMap[newItem.itemCode] || 0;
+                    const allowed = orderedItem.qty - alreadyReceived;
+                    
+                    if(newItem.qty > allowed) {
+                        toggleLoading(false);
+                        return alert(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nReceived: \nRemaining Allowed: \nYou tried to add: ${newItem.qty}`);
+                    }
+                }
+            }
+        } catch(e) {
+            console.error("PO Validation Error", e);
+            toggleLoading(false);
+            return alert("Error validating PO limit. Check console.");
+        }
+        toggleLoading(false);
+    }
+    // ---------------------------
+
+    let status = 'draft';
+    if (type === 'purchase_order') status = 'ordered'; 
+    if (type === 'purchase_request') status = 'pending';
+    if (autoProcess) status = 'approved';
+
+    const data = {
+        type, party, date, ref, items, 
+        status: status,
+        relatedPoId: relatedPoId || null,
+        reqBy: document.getElementById('voucherReqBy')?.value || '',
+        appBy: document.getElementById('voucherAppBy')?.value || '',
+        retBy: document.getElementById('voucherRetBy')?.value || '', 
+        recBy: document.getElementById('voucherRecBy')?.value || '', 
+        createdBy: currentUser.email,
+        createdAt: serverTimestamp()
+    };
+
+    const docRef = await addDoc(collection(db, "vouchers"), data);
+    
+    // Immediate Stock Update + Local Memory Update
+    if(autoProcess) {
+        for(let item of items) {
+            const invRef = doc(db, "inventory", item.itemId);
+            const invIndex = inventory.findIndex(i => i.id === item.itemId);
+            const localItem = inventory[invIndex];
+            
+            if(localItem) {
+                const cur = localItem.balance || 0;
+                const curDamage = localItem.damagedBalance || 0;
+                
+                let updateData = {};
+                
+                if (type === 'damage_return') {
+                    updateData = { damagedBalance: curDamage + item.qty };
+                    // Update Memory
+                    inventory[invIndex].damagedBalance = curDamage + item.qty;
+                } else if (type === 'return' || type === 'receipt') {
+                    updateData = { balance: cur + item.qty };
+                    // Update Memory
+                    inventory[invIndex].balance = cur + item.qty;
+                } else if (type === 'request') {
+                    updateData = { balance: cur - item.qty };
+                    // Update Memory
+                    inventory[invIndex].balance = cur - item.qty;
+                }
+                
+                await updateDoc(invRef, updateData);
+                
+                // Log
+                 await addDoc(collection(db, "transactions"), {
+                    date: serverTimestamp(),
+                    type: (type === 'receipt' || type === 'return' || type === 'damage_return') ? 'in' : 'out',
+                    subType: type, 
+                    itemId: item.itemId,
+                    itemName: item.itemName,
+                    qty: item.qty,
+                    party: party,
+                    ref: ref,
+                    user: currentUser.email
+                });
+            }
+        }
+    }
+
+    bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
+    loadVouchers();
+    // Don't call loadInventory/loadDashboard. We updated memory locally.
+    filterInventory(); // Refresh table view from memory
+    
+    alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+}
+
+// New Function: Receive PO (Convert to Receipt)
+window.receivePO = async (poId) => {
+    try {
+        toggleLoading(true);
+        const poDoc = await getDoc(doc(db, "vouchers", poId));
+        if(!poDoc.exists()) { toggleLoading(false); return; }
+        const po = poDoc.data();
+
+        // Fetch previous receipts for this PO to calculate remaining balance
+        const q = query(collection(db, "vouchers"), where("relatedPoId", "==", poId), where("type", "==", "receipt"));
+        const snap = await getDocs(q);
+        let receivedMap = {};
+        snap.forEach(d => {
+            d.data().items.forEach(i => {
+                receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty;
+            });
+        });
+
+        const itemsToReceive = [];
+        let allFullyReceived = true;
+
+        // Only add items that have remaining balance
+        po.items.forEach(item => {
+            const alreadyReceived = receivedMap[item.itemCode] || 0;
+            const balance = item.qty - alreadyReceived;
+            if(balance > 0) {
+                itemsToReceive.push({ ...item, qty: balance }); // Suggest balance qty
+                allFullyReceived = false;
+            }
+        });
+
+        if(allFullyReceived) {
+            toggleLoading(false);
+            return alert("This PO is already fully received! (ဤ PO အတွက် ပစ္စည်းများအားလုံး လက်ခံရရှိပြီးဖြစ်ပါသည်)");
+        }
+        
+        openVoucherModal('receipt'); 
+        
+        document.getElementById('voucherParty').value = po.party;
+        document.getElementById('voucherLetterRef').value = "PO: " + (po.ref || poId.slice(0,6));
+        document.getElementById('relatedPoId').value = poId; 
+        
+        document.getElementById('voucherItemsBody').innerHTML = ''; 
+        itemsToReceive.forEach(item => {
+            addVoucherItemRow(item);
+        });
+        toggleLoading(false);
+        
+    } catch(e) { 
+        console.error(e); 
+        toggleLoading(false);
+    }
+}
+
+// New Function: Compare PO vs Receipts
+window.comparePO = async (poId) => {
+    toggleLoading(true);
+    try {
+        const poDoc = await getDoc(doc(db, "vouchers", poId));
+        const po = poDoc.data();
+        
+        const q = query(collection(db, "vouchers"), where("relatedPoId", "==", poId), where("type", "==", "receipt"));
+        const snap = await getDocs(q);
+        
+        let receivedMap = {}; 
+        snap.forEach(doc => {
+            const rec = doc.data();
+            rec.items.forEach(i => {
+                receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty;
+            });
+        });
+        
+        const tbody = document.getElementById('reconcileBody');
+        tbody.innerHTML = '';
+        
+        po.items.forEach(item => {
+            const ordered = item.qty;
+            const received = receivedMap[item.itemCode] || 0;
+            const balance = ordered - received;
+            const color = balance > 0 ? 'text-danger fw-bold' : 'text-success';
+            
+            tbody.innerHTML += `
+                <tr>
+                    <td>${item.itemCode}</td>
+                    <td>${item.itemName}</td>
+                    <td class="text-center"></td>
+                    <td class="text-center"></td>
+                    <td class="text-center "></td>
+                </tr>
+            `;
+        });
+        
+        new bootstrap.Modal(document.getElementById('reconcileModal')).show();
+        
+    } catch(e) { console.error(e); }
+    toggleLoading(false);
+}
+
+window.loadVouchers = async () => {
+    const q = query(collection(db, "vouchers"), orderBy("date", "desc"), limit(50));
+    const snap = await getDocs(q);
+    
+    const rBody = document.getElementById('receiptTableBody');
+    const reqBody = document.getElementById('requestTableBody');
+    const retBody = document.getElementById('returnTableBody');
+    const poBody = document.getElementById('poTableBody');
+    const whPOBody = document.getElementById('warehousePOTableBody');
+    const prBody = document.getElementById('prTableBody'); // New
+    
+    rBody.innerHTML = ''; reqBody.innerHTML = ''; retBody.innerHTML = ''; poBody.innerHTML = ''; whPOBody.innerHTML = '';
+    if(prBody) prBody.innerHTML = '';
+    
+    let prCount = 0;
+    snap.forEach(d => {
+        const v = d.data();
+        
+        if(v.type === 'purchase_order') {
+            const row = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.party}</td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge bg-info text-dark">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary" onclick="comparePO('${d.id}')">Check</button>
+                </td>
+            </tr>`;
+            poBody.innerHTML += row;
+
+            const whRow = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.party}</td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge bg-info text-dark">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-success shadow-sm px-3" onclick="receivePO('${d.id}')">
+                        <i class="fas fa-box-open me-1"></i> Receive
+                    </button>
+                </td>
+            </tr>`;
+            whPOBody.innerHTML += whRow;
+        }
+        else if(v.type === 'purchase_request') {
+            prCount++;
+            const row = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.reqBy || 'Warehouse'}</td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge bg-warning text-dark">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-primary" onclick="convertPRtoPO('${d.id}')">Create PO</button>
+                    <button class="btn btn-sm btn-outline-danger ms-1" onclick="rejectVoucher('${d.id}')">Reject</button>
+                </td>
+            </tr>`;
+            if(prBody) prBody.innerHTML += row;
+        }
+        else if(v.type === 'receipt') {
+            const poRef = v.relatedPoId ? `<span class="badge bg-light text-dark border">PO Linked</span>` : '-';
+            const row = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.party}</td>
+                <td></td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
+                    ${v.status === 'draft' ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Confirm</button>` : ''}
+                </td>
+            </tr>`;
+            rBody.innerHTML += row;
+        } 
+        else if (v.type === 'request') {
+            const row = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.party}</td>
+                <td>${v.reqBy || '-'}</td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
+                    ${v.status === 'draft' ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Confirm</button>` : ''}
+                </td>
+            </tr>`;
+            reqBody.innerHTML += row;
+        } 
+        else if (v.type === 'return' || v.type === 'damage_return') {
+            const typeLabel = v.type === 'damage_return' 
+                ? '<span class="badge bg-danger">Damage</span>' 
+                : '<span class="badge bg-success">Good</span>';
+            
+            const returnRow = `
+            <tr>
+                <td>${v.date}</td>
+                <td>${v.party}</td>
+                <td></td>
+                <td>${v.items.length} Items</td>
+                <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
+                <td>
+                    <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
+                    ${v.status === 'draft' ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Confirm</button>` : ''}
+                </td>
+            </tr>`;
+            retBody.innerHTML += returnRow;
+        }
+    });
+    
+    const prBadge = document.getElementById('prBadge');
+    if(prBadge) prBadge.innerText = prCount;
+}
+
+window.filterPOTable = () => {
+    const filter = document.getElementById('poStatusFilter').value.toLowerCase();
+    const rows = document.querySelectorAll('#poTableBody tr');
+    rows.forEach(row => {
+        const statusCell = row.querySelector('td:nth-child(4)');
+        if(statusCell) {
+            const statusText = statusCell.innerText.toLowerCase();
+            row.style.display = (filter === 'all' || statusText.includes(filter)) ? '' : 'none';
+        }
+    });
+}
+
+window.convertPRtoPO = async (prId) => {
+    toggleLoading(true);
+    const docSnap = await getDoc(doc(db, "vouchers", prId));
+    if(!docSnap.exists()) return;
+    const pr = docSnap.data();
+    
+    openVoucherModal('purchase_order');
+    document.getElementById('voucherParty').value = pr.party || ''; // Supplier if suggested
+    document.getElementById('voucherLetterRef').value = "Ref: PR-" + prId.slice(0,6);
+    document.getElementById('voucherItemsBody').innerHTML = '';
+    
+    pr.items.forEach(i => addVoucherItemRow(i));
+    toggleLoading(false);
+}
+
+// --- KANBAN BOARD LOGIC ---
+window.loadKanban = async () => {
+    const q = query(collection(db, "vouchers"), orderBy("date", "desc"), limit(100));
+    const snap = await getDocs(q);
+    
+    const cols = {
+        requested: document.getElementById('kb-col-requested'),
+        ordered: document.getElementById('kb-col-ordered'),
+        shipped: document.getElementById('kb-col-shipped'),
+        received: document.getElementById('kb-col-received'),
+        completed: document.getElementById('kb-col-completed')
+    };
+    
+    const counts = { requested: 0, ordered: 0, shipped: 0, received: 0, completed: 0 };
+    
+    // Clear columns
+    Object.values(cols).forEach(c => c.innerHTML = '');
+
+    snap.forEach(d => {
+        const v = d.data();
+        let target = null;
+        let statusClass = '';
+        let actions = '';
+
+        if (v.type === 'purchase_request' && v.status !== 'rejected') {
+            target = 'requested';
+            statusClass = 'status-requested';
+            actions = `<button class="btn btn-sm btn-primary w-100 mt-2" onclick="convertPRtoPO('${d.id}')">Create PO</button>`;
+        } else if (v.type === 'purchase_order') {
+            if (v.status === 'ordered') {
+                target = 'ordered';
+                statusClass = 'status-ordered';
+                actions = `<button class="btn btn-sm btn-outline-primary w-100 mt-2" style="color: #6610f2; border-color: #6610f2;" onclick="updatePOStatus('${d.id}', 'shipped')">Mark Shipped <i class="fas fa-arrow-right"></i></button>`;
+            } else if (v.status === 'shipped') {
+                target = 'shipped';
+                statusClass = 'status-shipped';
+                actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Items</button>`;
+            } else if (v.status === 'received') {
+                target = 'received';
+                statusClass = 'status-received';
+                actions = `<button class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="updatePOStatus('${d.id}', 'completed')">Mark Completed</button>`;
+            } else if (v.status === 'completed') {
+                target = 'completed';
+                statusClass = 'status-completed';
+                actions = `<div class="text-center mt-2 text-success small"><i class="fas fa-check-circle"></i> Done</div>`;
+            }
+        }
+
+        if (target && cols[target]) {
+            counts[target]++;
+            const date = v.date ? new Date(v.date).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : '-';
+            const card = `
+                <div class="kanban-card ">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="fw-bold text-dark small">${v.ref || d.id.slice(0,6).toUpperCase()}</span>
+                        <span class="text-muted small" style="font-size: 0.75rem;"></span>
+                    </div>
+                    <div class="fw-bold text-primary mb-1 text-truncate">${v.party || 'Unknown'}</div>
+                    <div class="small text-secondary mb-2"><i class="fas fa-box me-1"></i> ${v.items ? v.items.length : 0} Items</div>
+                    
+                </div>
+            `;
+            cols[target].innerHTML += card;
+        }
+    });
+
+    // Update counts
+    Object.keys(counts).forEach(k => {
+        const el = document.getElementById(`kb-count-`);
+        if(el) el.innerText = counts[k];
+    });
+}
+
+window.updatePOStatus = async (id, status) => {
+    if(!confirm(`Update status to ${status.toUpperCase()}?`)) return;
+    await updateDoc(doc(db, "vouchers", id), { status: status });
+    loadKanban();
+}
+
+window.rejectVoucher = async (id) => {
+    if(!confirm("Are you sure you want to reject this request?")) return;
+    toggleLoading(true);
+    try {
+        await updateDoc(doc(db, "vouchers", id), { status: 'rejected' });
+        loadVouchers();
+    } catch(e) {
+        console.error(e);
+        alert("Error rejecting voucher: " + e.message);
+    }
+    toggleLoading(false);
+}
+
+window.approveVoucher = async (id, type) => {
+    if(!confirm("Confirm and process stock update?")) return;
+    const vRef = doc(db, "vouchers", id);
+    const vSnap = await getDoc(vRef);
+    const v = vSnap.data();
+
+    // Update Stock (DB + Local Memory)
+    for(let item of v.items) {
+        const invRef = doc(db, "inventory", item.itemId);
+        const invIndex = inventory.findIndex(i => i.id === item.itemId);
+        const localItem = inventory[invIndex];
+
+        if(localItem) {
+            const cur = localItem.balance || 0;
+            const curDamage = localItem.damagedBalance || 0;
+            let updateData = {};
+            
+            if (v.type === 'damage_return') {
+                updateData = { damagedBalance: curDamage + item.qty };
+                inventory[invIndex].damagedBalance = curDamage + item.qty;
+            } else if (v.type === 'return' || v.type === 'receipt') {
+                updateData = { balance: cur + item.qty };
+                inventory[invIndex].balance = cur + item.qty;
+            } else {
+                updateData = { balance: cur - item.qty };
+                inventory[invIndex].balance = cur - item.qty;
+            }
+
+            await updateDoc(invRef, updateData);
+            
+            // Log Transaction
+            await addDoc(collection(db, "transactions"), {
+                date: serverTimestamp(),
+                type: (v.type === 'receipt' || v.type === 'return' || v.type === 'damage_return') ? 'in' : 'out',
+                subType: v.type, 
+                itemId: item.itemId,
+                itemName: item.itemName,
+                qty: item.qty,
+                party: v.party,
+                ref: v.ref,
+                user: currentUser.email
+            });
+        }
+    }
+    
+    await updateDoc(vRef, { status: 'approved' });
+    loadVouchers();
+    filterInventory(); // Update UI
+    // loadProjectUsage(); // We can reload this lazily when view is clicked
+}
+
+window.printVoucher = async (id) => {
+    const snap = await getDoc(doc(db, "vouchers", id));
+    const v = snap.data();
+    
+    let title = "VOUCHER";
+    if (v.type === 'receipt') title = "GOODS RECEIPT NOTE (GRN)";
+    else if (v.type === 'request') title = "STOCK ISSUE NOTE";
+    else if (v.type === 'return') title = "MATERIAL RETURN NOTE";
+    else if (v.type === 'damage_return') title = "DAMAGE RETURN NOTE";
+    else if (v.type === 'purchase_order') title = "PURCHASE ORDER";
+    else if (v.type === 'purchase_request') title = "PURCHASE REQUEST";
+
+    document.getElementById('printTitle').innerText = title;
+    document.getElementById('printParty').innerText = v.party;
+    document.getElementById('printDate').innerText = v.date;
+    document.getElementById('printRef').innerText = "Ref: " + (v.ref || '-');
+    document.getElementById('printId').innerText = id.slice(0, 8).toUpperCase();
+    
+    // Generate QR Code
+    const qrContainer = document.getElementById('printQRCode');
+    qrContainer.innerHTML = '';
+    new QRCode(qrContainer, {
+        text: window.location.origin + window.location.pathname + '?voucher=' + id,
+        width: 80,
+        height: 80
+    });
+
+    if (v.type === 'return' || v.type === 'damage_return') {
+        document.getElementById('label1').innerText = "Returned By";
+        document.getElementById('printReqBy').innerText = v.retBy || '';
+        document.getElementById('label2').innerText = "Checked By";
+        document.getElementById('printAppBy').innerText = "________________";
+        document.getElementById('label3').innerText = "Received By";
+        document.getElementById('printRecBy').innerText = v.recBy || '';
+    } else {
+        document.getElementById('label1').innerText = "Prepared/Requested By";
+        document.getElementById('printReqBy').innerText = v.reqBy || '';
+        document.getElementById('label2').innerText = "Approved By";
+        document.getElementById('printAppBy').innerText = v.appBy || '';
+        document.getElementById('label3').innerText = "Received By";
+        document.getElementById('printRecBy').innerText = ''; 
+    }
+    
+    const tbody = document.getElementById('printTableBody');
+    tbody.innerHTML = '';
+    let count = 1;
+    
+    v.items.forEach(i => {
+        const invItem = inventory.find(inv => inv.id === i.itemId);
+        const unit = invItem ? (invItem.unit || 'Pcs') : 'Pcs';
+        const desc = invItem ? (invItem.brand + " " + invItem.model) : i.itemName;
+        const serialDisplay = i.serials ? `<div class="small text-muted mt-1" style="font-size:0.75rem;"><i class="fas fa-barcode me-1"></i>S/N: ${i.serials}</div>` : '';
+
+        tbody.innerHTML += `
+            <tr>
+                <td>${count++}</td>
+                <td>${i.itemCode}</td>
+                <td></td>
+                <td></td>
+                <td class="text-center">${i.qty}</td>
+                <td class="text-center"></td>
+            </tr>
+        `;
+    });
+    
+    new bootstrap.Modal(document.getElementById('printModal')).show();
+}
+
+// NEW: Print Project Usage Voucher for Finance
+window.printProjectVoucher = async (projectName) => {
+    toggleLoading(true);
+    try {
+        const q = query(collection(db, "transactions"), where("party", "==", projectName));
+        const snap = await getDocs(q);
+        
+        const usageMap = {}; // itemCode -> { name, sent, returned, damaged }
+        
+        snap.forEach(d => {
+            const t = d.data();
+            if(!t.itemId) return;
+            
+            if(!usageMap[t.itemId]) {
+                usageMap[t.itemId] = { 
+                    code: t.itemId, // temp, will fetch real code if needed or use local inventory
+                    name: t.itemName || 'Unknown Item',
+                    sent: 0,
+                    returned: 0,
+                    damaged: 0
+                };
+            }
+            
+            if(t.type === 'out') usageMap[t.itemId].sent += t.qty;
+            if(t.type === 'in' && t.subType === 'return') usageMap[t.itemId].returned += t.qty;
+            if(t.type === 'in' && t.subType === 'damage_return') usageMap[t.itemId].damaged += t.qty;
+        });
+        
+        // Enrich with Inventory Code if possible (from local cache)
+        const rows = [];
+        for (const [id, data] of Object.entries(usageMap)) {
+            const invItem = inventory.find(i => i.id === id);
+            const code = invItem ? invItem.itemCode : 'N/A';
+            const unit = invItem ? (invItem.unit || 'Pcs') : 'Pcs';
+            const netUsed = data.sent - data.returned; // Standard Net Usage Calculation
+            
+            if (data.sent > 0 || data.returned > 0 || data.damaged > 0) {
+                rows.push({ ...data, code, unit, netUsed });
+            }
+        }
+        
+        // Generate QR Code for Project Voucher
+        const qrDataUrl = await new Promise((resolve) => {
+            const div = document.createElement('div');
+            new QRCode(div, { 
+                text: window.location.origin + window.location.pathname + '?project=' + encodeURIComponent(projectName),
+                width: 100, 
+                height: 100 
+            });
+            setTimeout(() => {
+                const img = div.querySelector('img');
+                if (img && img.src) resolve(img.src);
+                else {
+                    const canvas = div.querySelector('canvas');
+                    resolve(canvas ? canvas.toDataURL() : '');
+                }
+            }, 100);
+        });
+
+        // Generate HTML
+        const printWindow = window.open('', '', 'height=600,width=800');
+        printWindow.document.write('<html><head><title>Project Usage Invoice</title>');
+        printWindow.document.write('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">');
+        printWindow.document.write('<style>body{padding: 20px; font-family: sans-serif;} .header{border-bottom: 2px solid #333; margin-bottom: 20px; padding-bottom: 10px;}</style>');
+        printWindow.document.write('</head><body>');
+        
+        printWindow.document.write(`
+            <div class="container">
+                <div class="header d-flex justify-content-between align-items-center">
+                    <div>
+                        <h4 class="fw-bold text-primary mb-0">Mother Home Solar Co., Ltd.</h4>
+                        <small class="text-muted">Project Usage Summary (Invoice Attachment)</small>
+                    </div>
+                    <div class="text-end">
+                        <h3 class="fw-bold mb-0">PROJECT VOUCHER</h3>
+                        <p class="mb-0">Date: ${new Date().toLocaleDateString()}</p>
+                        <div class="mt-2 d-flex justify-content-end">
+                            <img src="" width="80" height="80">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mb-4 p-3 bg-light rounded border">
+                    <h5 class="mb-1">Project Name: <strong></strong></h5>
+                    <p class="mb-0 text-muted small">This document lists total items sent, returned, and net consumed quantity for billing.</p>
+                </div>
+
+                <table class="table table-bordered table-striped align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Item Code</th>
+                            <th>Description</th>
+                            <th class="text-center">Total Sent</th>
+                            <th class="text-center">Returned (Good)</th>
+                            <th class="text-center bg-primary bg-opacity-25 text-dark fw-bold">Net Usage (Billable)</th>
+                            <th class="text-center text-danger">Damaged</th>
+                            <th class="text-center">Unit</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `);
+        
+        rows.forEach(r => {
+            printWindow.document.write(`
+                <tr>
+                    <td>${r.code}</td>
+                    <td>${r.name}</td>
+                    <td class="text-center">${r.sent}</td>
+                    <td class="text-center">${r.returned}</td>
+                    <td class="text-center fw-bold bg-primary bg-opacity-10">${r.netUsed}</td>
+                    <td class="text-center text-danger">${r.damaged > 0 ? r.damaged : '-'}</td>
+                    <td class="text-center small text-muted">${r.unit}</td>
+                </tr>
+            `);
+        });
+        
+        printWindow.document.write(`
+                    </tbody>
+                </table>
+                
+                <div class="row mt-5 pt-4">
+                    <div class="col-6 text-center">
+                        <div class="border-top border-dark pt-2 w-75 mx-auto">
+                            <strong>Warehouse Manager</strong><br>
+                            <small class="text-muted">Verified By</small>
+                        </div>
+                    </div>
+                    <div class="col-6 text-center">
+                        <div class="border-top border-dark pt-2 w-75 mx-auto">
+                            <strong>Project Manager / Finance</strong><br>
+                            <small class="text-muted">Approved By</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `);
+        
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        // Wait for styles to load then print
+        setTimeout(() => { printWindow.print(); }, 1000);
+        
+    } catch(e) {
+        console.error(e);
+        alert("Error generating project voucher.");
+    }
+    toggleLoading(false);
+}
+
+window.printDiv = (divId) => {
+    var printContents = document.getElementById(divId).innerHTML;
+    var originalContents = document.body.innerHTML;
+    document.body.innerHTML = printContents;
+    window.print();
+    document.body.innerHTML = originalContents;
+    location.reload(); 
+}
+
+// --- GROUND STOCK & IMPORT LOGIC ---
+window.openGroundStockModal = (tab = 'sheet') => {
+    const modal = new bootstrap.Modal(document.getElementById('groundStockModal'));
+    modal.show();
+    
+    // Activate correct tab
+    const triggerEl = document.querySelector(tab === 'import' ? '#tab-import' : (tab === 'qr' ? '#tab-qr' : '#tab-sheet'));
+    bootstrap.Tab.getInstance(triggerEl) || new bootstrap.Tab(triggerEl).show();
+}
+
+window.printCountSheet = () => {
+    let html = `
+        <html><head><title>Ground Stock Count Sheet</title>
+        <style>
+            body { font-family: sans-serif; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #000; padding: 8px; text-align: left; }
+            th { background-color: #f0f0f0; }
+            .check-box { width: 100px; }
+        </style>
+        </head><body>
+        <h2 style="text-align:center;">Ground Stock Count Sheet (လက်ကျန်စာရင်းကောက် ပုံစံ)</h2>
+        <p>Date: _________________ &nbsp;&nbsp; Counter Name: _________________</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Brand / Model</th>
+                    <th>Category</th>
+                    <th>System Qty</th>
+                    <th class="check-box">ACTUAL QTY</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    const sortedInv = [...inventory].sort((a,b) => (a.category > b.category) ? 1 : -1);
+    
+    sortedInv.forEach(i => {
+        html += `
+            <tr>
+                <td>${i.itemCode}</td>
+                <td>${i.brand} - ${i.model}</td>
+                <td>${i.category}</td>
+                <td>${i.balance}</td>
+                <td></td>
+            </tr>
+        `;
+    });
+
+    html += `</tbody></table></body></html>`;
+
+    const win = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+    win.print();
+}
+
+// --- SMART QR PRINT LOGIC (BULK) ---
+async function printQRLabels() {
+    if(inventory.length === 0) return alert("No items to print.");
+    toggleLoading(true);
+    
+    const printPerUnit = document.getElementById('printAllUnits').checked;
+    const baseUrl = "https://erp-inv.ayntscfdev.workers.dev/"; // Optional scanning URL base
+
+    const generateQR = (text) => {
+        return new Promise((resolve) => {
+            const div = document.createElement('div');
+            const qr = new QRCode(div, { text: text, width: 128, height: 128 });
+            setTimeout(() => {
+                const img = div.querySelector('img');
+                if (img && img.src) resolve(img.src);
+                else {
+                    const canvas = div.querySelector('canvas');
+                    resolve(canvas ? canvas.toDataURL() : '');
+                }
+            }, 50); 
+        });
+    };
+
+    let html = `
+        <html><head><title>Inventory Smart Labels</title>
+        <style>
+            body { font-family: sans-serif; }
+            .label-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+            .label-item { 
+                width: 200px; height: 280px; 
+                border: 1px dotted #ccc; 
+                padding: 10px; 
+                text-align: center; 
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                page-break-inside: avoid;
+            }
+            .qr-img { width: 120px; height: 120px; margin: 10px 0; }
+            .code { font-weight: bold; font-size: 16px; margin-bottom: 5px; }
+            .meta { font-size: 12px; color: #555; }
+            .seq { font-size: 10px; color: #999; margin-top: 5px; }
+            @media print { body { margin: 0; } .label-item { border: 1px solid #eee; } }
+        </style>
+        </head><body>
+        <div class="label-grid">
+    `;
+
+    for(const item of inventory) {
+        if(!item.itemCode) continue;
+        const qty = (printPerUnit && item.balance > 0) ? item.balance : 1;
+        // Scan Value is full URL for direct access
+        const qrSrc = await generateQR(window.location.origin + window.location.pathname + '?code=' + item.itemCode);
+
+        for(let i=1; i<=qty; i++) {
+            html += `
+                <div class="label-item">
+                    <div class="code">${item.itemCode}</div>
+                    <img src="" class="qr-img">
+                    <div class="meta">${item.brand}</div>
+                    <div class="meta">${item.model}</div>
+                    <div class="meta" style="font-size:10px; margin-top:5px;">${item.category}</div>
+                    ${printPerUnit ? `<div class="seq">Item  of </div>` : ''}
+                </div>
+            `;
+        }
+    }
+
+    html += `</div></body></html>`;
+    toggleLoading(false);
+    
+    let iframe = document.createElement('iframe');
+    iframe.style.position = 'absolute'; iframe.style.width = '0px'; iframe.style.height = '0px'; iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    setTimeout(() => { iframe.contentWindow.focus(); iframe.contentWindow.print(); }, 500);
+}
+
+// --- FINANCE EXPORT LOGIC ---
+window.exportFinanceData = () => {
+    if(inventory.length === 0) return alert("No data to export");
+    let csv = ["Item Code,Category,Brand,Model,Specifications,Qty,Unit Cost,Total Asset Value"];
+    inventory.forEach(item => {
+        const specs = item.specs ? Object.values(item.specs).join("; ") : (item.spec || "");
+        const cost = Math.round(item.costPrice || 0);
+        const qty = item.balance || 0;
+        const total = Math.round(cost * qty);
+        csv.push([`"${item.itemCode}"`,`"${item.category}"`,`"${item.brand}"`,`"${item.model}"`,`""`,qty,cost,total].join(","));
+    });
+    const csvFile = new Blob([csv.join("\n")], { type: "text/csv" });
+    const downloadLink = document.createElement("a");
+    downloadLink.download = `finance_stock_value_${new Date().toISOString().slice(0,10)}.csv`;
+    downloadLink.href = window.URL.createObjectURL(csvFile);
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+}
+
+// --- IMPORT / EXPORT LOGIC ---
+
+window.exportInventoryCSV = () => {
+    if(inventory.length === 0) return alert("No data to export.");
+    
+    // Define Columns
+    const cols = ['itemCode', 'category', 'brand', 'model', 'spec', 'unit', 'balance', 'costPrice', 'sellingPrice', 'remark'];
+    let csvContent = cols.join(",") + "\n";
+
+    inventory.forEach(item => {
+        const row = cols.map(col => {
+            let val = item[col] === undefined || item[col] === null ? '' : item[col];
+            // Escape quotes and handle commas
+            val = String(val).replace(/"/g, '""');
+            if (val.includes(',')) val = `""`;
+            return val;
+        });
+        csvContent += row.join(",") + "\n";
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `inventory_full_export_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+window.processCSVImport = async () => {
+    const input = document.getElementById('csvImportInput').value.trim();
+    if (!input) return alert("Please paste CSV data first.");
+
+    const lines = input.split('\n');
+    if (lines.length < 2) return alert("Invalid CSV format or empty data.");
+
+    const headers = lines[0].split(',').map(h => h.trim());
+    if(!headers.includes('itemCode')) return alert("Error: CSV must have an 'itemCode' column.");
+
+    if(!confirm(`Ready to import ${lines.length - 1} rows? Existing items with matching codes will be UPDATED.`)) return;
+
+    toggleLoading(true);
+    const batch = writeBatch(db);
+    let count = 0;
+    let batchCount = 0;
+
+    for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        
+        // Basic CSV parsing
+        const values = lines[i].split(',').map(v => v.trim());
+        const data = {};
+        
+        headers.forEach((h, index) => {
+            let val = values[index];
+            if (h === 'balance' || h === 'costPrice' || h === 'sellingPrice') {
+                val = parseFloat(val);
+                if (isNaN(val)) val = 0;
+            }
+            if (val !== undefined) data[h] = val;
+        });
+
+        if (data.itemCode) {
+            const existing = inventory.find(inv => inv.itemCode === data.itemCode);
+            const ref = existing ? doc(db, "inventory", existing.id) : doc(collection(db, "inventory"));
+            
+            if (!existing) data.createdAt = serverTimestamp();
+            data.updatedAt = serverTimestamp();
+            data.updatedBy = currentUser.email;
+
+            batch.set(ref, data, { merge: true });
+            count++;
+            batchCount++;
+            
+            // Firestore batch limit is 500
+            if (batchCount >= 450) {
+                await batch.commit();
+                batchCount = 0;
+            }
+        }
+    }
+
+    if (batchCount > 0) await batch.commit();
+    
+    toggleLoading(false);
+    alert(`Import Complete! Processed  items.`);
+    bootstrap.Modal.getInstance(document.getElementById('groundStockModal')).hide();
+    loadInventory(true); // Reload data
+}
+
+window.downloadCsvTemplate = () => {
+    const headers = "itemCode,category,brand,model,balance,unit,costPrice,sellingPrice,remark";
+    const example = "SOL-ABC-001,Solar,Jinko,Tiger Pro,100,Pcs,150.00,180.00,Initial Import";
+    const csvContent = headers + "\n" + example;
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "inventory_import_template.csv";
+    link.click();
+}
+
+// --- PROJECT USAGE & STATUS LOGIC ---
+async function loadProjectUsage() {
+    const qAll = query(collection(db, "transactions")); 
+    const snapAll = await getDocs(qAll);
+    
+    const qStatus = query(collection(db, "project_status"));
+    const snapStatus = await getDocs(qStatus);
+    const projectStatusMap = {}; 
+    snapStatus.forEach(d => { projectStatusMap[d.id] = d.data().status; });
+
+    const projectData = {}; 
+
+    snapAll.forEach(d => {
+        const t = d.data();
+        if(t.party && t.party !== "Supplier" && t.party !== "Initial Stock") {
+            if(!projectData[t.party]) {
+                projectData[t.party] = { sent: 0, returned: 0, damaged: 0, net: 0, status: projectStatusMap[t.party] || 'active' };
+            }
+            
+            if(t.type === 'out') projectData[t.party].sent += t.qty;
+            if(t.type === 'in' && t.subType === 'return') projectData[t.party].returned += t.qty;
+            if(t.type === 'in' && t.subType === 'damage_return') projectData[t.party].damaged += t.qty;
+        }
+    });
+
+    const tbody = document.getElementById('usageTableBody');
+    tbody.innerHTML = '';
+    
+    for(let proj in projectData) {
+        const d = projectData[proj];
+        const net = d.sent - d.returned - d.damaged; 
+        
+        const statusBadge = d.status === 'completed' 
+            ? '<span class="badge bg-success">Completed</span>' 
+            : '<span class="badge bg-primary">Active</span>';
+        
+        const actionBtn = d.status === 'completed'
+            ? `
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('', 'active')">Re-open</button>
+                <button class="btn btn-sm btn-outline-primary ms-1" onclick="printProjectVoucher('')" title="Print Usage Voucher"><i class="fas fa-file-invoice"></i></button>
+              `
+            : `<button class="btn btn-sm btn-outline-success" onclick="toggleProjectStatus('', 'completed')">Mark Complete</button>`;
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="fw-bold"></td>
+                <td></td>
+                <td>${d.sent}</td>
+                <td>${d.returned}</td>
+                <td class="text-danger fw-bold">${d.damaged}</td>
+                <td></td>
+                <td></td>
+            </tr>
+        `;
+    }
+}
+
+window.toggleProjectStatus = async (projectName, newStatus) => {
+    if(!confirm(`Change status of "" to ${newStatus.toUpperCase()}?`)) return;
+    await setDoc(doc(db, "project_status", projectName), { status: newStatus }, { merge: true });
+    loadProjectUsage();
+}
+
+// --- FLOW LOGIC ---
+async function loadFlow() {
+    const tbody = document.getElementById('flowTableBody');
+    const q = query(collection(db, "transactions"), orderBy("date", "desc"), limit(50));
+    const snap = await getDocs(q);
+    tbody.innerHTML = '';
+    snap.forEach(d => {
+        const t = d.data();
+        const date = t.date ? new Date(t.date.seconds * 1000).toLocaleDateString() : '-';
+        tbody.innerHTML += `<tr><td></td><td>${t.type} (${t.subType||'-'})</td><td>-</td><td>${t.itemName}</td><td>${t.qty}</td><td>${t.party}</td><td>-</td><td>${t.user}</td></tr>`;
+    });
+
+    // Re-apply filter if exists (e.g. from URL param or viewPartyHistory)
+    const filterVal = document.getElementById('flowSearchInput').value;
+    if(filterVal) filterFlow();
+}
+
+window.filterFlow = () => {
+    const input = document.getElementById('flowSearchInput');
+    const filter = input.value.toLowerCase();
+    const tbody = document.getElementById('flowTableBody');
+    const tr = tbody.getElementsByTagName('tr');
+    for (let i = 0; i < tr.length; i++) {
+        const text = tr[i].textContent || tr[i].innerText;
+        tr[i].style.display = text.toLowerCase().indexOf(filter) > -1 ? "" : "none";
+    }
+}
+
+// --- USERS ---
+async function loadUsers() {
+    const tbody = document.getElementById('usersTableBody');
+    const snap = await getDocs(collection(db, "users"));
+    tbody.innerHTML = '';
+    snap.forEach(d => {
+        const u = d.data();
+        const roleOptions = ['staff', 'admin', 'procurement', 'warehouse', 'finance', 'superadmin'].map(r => 
+            `<option value="" ${u.role === r ? 'selected' : ''}>${r.toUpperCase()}</option>`
+        ).join('');
+
+        tbody.innerHTML += `
+            <tr>
+                <td>${u.email}</td>
+                <td><span class="badge bg-secondary">${u.role.toUpperCase()}</span></td>
+                <td>
+                    <select onchange="changeUserRole('${d.id}', this.value)" class="form-select form-select-sm" style="width:150px">
+                        
+                    </select>
+                </td>
+            </tr>`;
+    });
+}
+
+window.changeUserRole = async (uid, newRole) => {
+    if(!confirm("Change role?")) return loadUsers(); 
+    await updateDoc(doc(db, "users", uid), { role: newRole });
+    alert("Role Updated!");
+    loadUsers();
+}
+
+// --- CLEAR DATABASE (SUPER ADMIN ONLY) ---
+window.clearDatabase = async () => {
+    if(currentUserRole !== 'superadmin') return alert("Access Denied: SuperAdmin privileges required.");
+    
+    const confirmCode = Math.floor(1000 + Math.random() * 9000);
+    const input = prompt(`⚠ WARNING: SYSTEM RESET ⚠\n\nThis will permanently DELETE ALL:\n- Inventory Items\n- Vouchers & Receipts\n- Transactions\n- Parties & Projects\n\nTo confirm, type this code: `);
+    
+    if(input !== String(confirmCode)) return alert("Incorrect code. Operation cancelled.");
+    
+    toggleLoading(true);
+    try {
+        // Helper to delete all docs in a collection
+        const deleteAll = async (colName) => {
+            const q = query(collection(db, colName));
+            const snap = await getDocs(q);
+            const batch = writeBatch(db);
+            let count = 0;
+            snap.forEach(doc => {
+                batch.delete(doc.ref);
+                count++;
+            });
+            if(count > 0) await batch.commit();
+            console.log(`Deleted  from `);
+        };
+
+        await deleteAll("inventory");
+        await deleteAll("vouchers");
+        await deleteAll("transactions");
+        await deleteAll("parties");
+        await deleteAll("project_status");
+        
+        alert("System has been reset successfully. Page will reload.");
+        location.reload();
+    } catch(e) {
+        console.error(e);
+        alert("Error during reset: " + e.message);
+    }
+    toggleLoading(false);
+}
+
+// --- DOWNLOAD CSV (Generic for tables) ---
+window.downloadCSV = (tableId, filename) => {
+    const table = document.getElementById(tableId);
+    if(!table) return;
+    
+    let csv = [];
+    const rows = document.querySelectorAll(`# tr`); // Select rows from body
+    
+    // Add header if needed, but tableId usually points to tbody. 
+    // Let's stick to the specific exportInventoryCSV for the main list.
+    // This function is for other tables (Logs, History)
+    
+    for (let i = 0; i < rows.length; i++) {
+        let row = [], cols = rows[i].querySelectorAll("td, th");
+        for (let j = 0; j < cols.length; j++) {
+            let txt = cols[j].innerText.replace(/,/g, " ").replace(/\n/g, " "); // Clean text
+            row.push(txt);
+        }
+        csv.push(row.join(","));
+    }
+
+    const csvFile = new Blob([csv.join("\n")], { type: "text/csv" });
+    const downloadLink = document.createElement("a");
+    downloadLink.download = filename;
+    downloadLink.href = window.URL.createObjectURL(csvFile);
+    downloadLink.style.display = "none";
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    document.body.removeChild(downloadLink);
+}
+
+function toggleLoading(show) {
+    document.getElementById('loadingOverlay').classList.toggle('hidden', !show);
+}
+
+initApp();
