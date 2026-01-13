@@ -219,6 +219,7 @@ body {
 .kanban-card.status-requested { border-left-color: #ffc107; }
 .kanban-card.status-ordered { border-left-color: #0dcaf0; }
 .kanban-card.status-shipped { border-left-color: #6610f2; }
+.kanban-card.status-partially-received { border-left-color: #fd7e14; }
 .kanban-card.status-received { border-left-color: #198754; }
 .kanban-card.status-completed { border-left-color: #6c757d; }
 

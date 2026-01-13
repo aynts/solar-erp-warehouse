@@ -1619,6 +1619,8 @@ window.saveVoucher = async (autoProcess = false) => {
 
                     if (totalReceived >= totalOrdered) {
                         await updateDoc(poRef, { status: 'received' });
+                    } else if (totalReceived > 0) {
+                        await updateDoc(poRef, { status: 'partially_received' });
                     }
                 }
             } catch(e) { console.error("PO Status Update Error", e); }
@@ -1665,7 +1667,7 @@ window.receivePO = async (poId) => {
         });
 
         if(allFullyReceived) {
-            if (po.status === 'ordered' || po.status === 'shipped') {
+            if (po.status === 'ordered' || po.status === 'shipped' || po.status === 'partially_received') {
                 if(confirm("Items fully received. Mark PO as 'Received' on Kanban board?")) {
                     await updateDoc(doc(db, "vouchers", poId), { status: 'received' });
                     loadKanban();
@@ -1891,11 +1893,12 @@ window.loadKanban = async () => {
         requested: document.getElementById('kb-col-requested'),
         ordered: document.getElementById('kb-col-ordered'),
         shipped: document.getElementById('kb-col-shipped'),
+        partial: document.getElementById('kb-col-partial'),
         received: document.getElementById('kb-col-received'),
         completed: document.getElementById('kb-col-completed')
     };
     
-    const counts = { requested: 0, ordered: 0, shipped: 0, received: 0, completed: 0 };
+    const counts = { requested: 0, ordered: 0, shipped: 0, partial: 0, received: 0, completed: 0 };
     
     // Clear columns
     Object.values(cols).forEach(c => c.innerHTML = '');
@@ -1919,6 +1922,10 @@ window.loadKanban = async () => {
                 target = 'shipped';
                 statusClass = 'status-shipped';
                 actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Items</button>`;
+            } else if (v.status === 'partially_received') {
+                target = 'partial';
+                statusClass = 'status-partially-received';
+                actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Remaining</button>`;
             } else if (v.status === 'received') {
                 target = 'received';
                 statusClass = 'status-received';
