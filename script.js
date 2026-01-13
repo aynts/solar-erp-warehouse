@@ -2067,6 +2067,10 @@ window.approveVoucher = async (id, type) => {
 
 window.printVoucher = async (id) => {
     const snap = await getDoc(doc(db, "vouchers", id));
+    if (!snap.exists()) {
+        alert("Voucher not found!");
+        return;
+    }
     const v = snap.data();
     
     let title = "VOUCHER";
@@ -2086,11 +2090,18 @@ window.printVoucher = async (id) => {
     // Generate QR Code
     const qrContainer = document.getElementById('printQRCode');
     qrContainer.innerHTML = '';
-    new QRCode(qrContainer, {
+    
+    const tempDiv = document.createElement('div');
+    new QRCode(tempDiv, {
         text: window.location.origin + window.location.pathname + '?voucher=' + id,
         width: 80,
         height: 80
     });
+    
+    setTimeout(() => {
+        const qrEl = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
+        if(qrEl) qrContainer.appendChild(qrEl);
+    }, 50);
 
     if (v.type === 'return' || v.type === 'damage_return') {
         document.getElementById('label1').innerText = "Returned By";
