@@ -1956,14 +1956,14 @@ window.loadKanban = async () => {
             counts[target]++;
             const date = v.date ? new Date(v.date).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : '-';
             const card = `
-                <div class="kanban-card ">
+                <div class="kanban-card ${statusClass}">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <span class="fw-bold text-dark small">${v.ref || d.id.slice(0,6).toUpperCase()}</span>
-                        <span class="text-muted small" style="font-size: 0.75rem;"></span>
+                        <span class="text-muted small" style="font-size: 0.75rem;">${date}</span>
                     </div>
                     <div class="fw-bold text-primary mb-1 text-truncate">${v.party || 'Unknown'}</div>
                     <div class="small text-secondary mb-2"><i class="fas fa-box me-1"></i> ${v.items ? v.items.length : 0} Items</div>
-                    
+                    ${actions}
                 </div>
             `;
             cols[target].innerHTML += card;
@@ -2569,10 +2569,10 @@ async function loadProjectUsage() {
         
         const actionBtn = d.status === 'completed'
             ? `
-                <button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('', 'active')">Re-open</button>
-                <button class="btn btn-sm btn-outline-primary ms-1" onclick="printProjectVoucher('')" title="Print Usage Voucher"><i class="fas fa-file-invoice"></i></button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('${proj}', 'active')">Re-open</button>
+                <button class="btn btn-sm btn-outline-primary ms-1" onclick="printProjectVoucher('${proj}')" title="Print Usage Voucher"><i class="fas fa-file-invoice"></i></button>
               `
-            : `<button class="btn btn-sm btn-outline-success" onclick="toggleProjectStatus('', 'completed')">Mark Complete</button>`;
+            : `<button class="btn btn-sm btn-outline-success" onclick="toggleProjectStatus('${proj}', 'completed')">Mark Complete</button>`;
 
         tbody.innerHTML += `
             <tr>
