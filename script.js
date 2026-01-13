@@ -939,6 +939,24 @@ window.openItemModal = (id=null) => {
         document.getElementById('qrCodeContainer').innerHTML = ''; // Clear QR
         handleCategoryChange(); 
     }
+
+    // Staff Read-Only Logic
+    const saveBtn = document.querySelector('#itemModal .modal-footer .btn-primary');
+    const allInputs = document.querySelectorAll('#itemModal input, #itemModal select, #itemModal textarea');
+    
+    if (currentUserRole === 'staff') {
+        allInputs.forEach(el => el.setAttribute('disabled', 'true'));
+        if(saveBtn) saveBtn.classList.add('hidden');
+        document.getElementById('itemModalTitle').innerText = "Item Details";
+    } else {
+        allInputs.forEach(el => {
+            if (el.id === 'itemBalance' && currentUserRole !== 'admin' && currentUserRole !== 'superadmin') return;
+            el.removeAttribute('disabled');
+        });
+        if(saveBtn) saveBtn.classList.remove('hidden');
+        document.getElementById('itemModalTitle').innerText = id ? "Edit Item" : "New Item";
+    }
+
     modal.show();
 }
 
