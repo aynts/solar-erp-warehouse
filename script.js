@@ -2679,3 +2679,21 @@ function toggleLoading(show) {
 }
 
 initApp();
+import React from 'react';
+// Import the Header component you just created
+import Header from './components/Header'; 
+
+function App() {
+  return (
+    <div className="App">
+      {/* Render the Header at the top of your app */}
+      <Header />
+      
+      <main>
+        <p>Welcome to the Sustainable Energy dashboard.</p>
+      </main>
+    </div>
+  );
+}
+
+export default App;
