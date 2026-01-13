@@ -2282,7 +2282,7 @@ window.printProjectVoucher = async (projectName) => {
                         <h3 class="fw-bold mb-0">PROJECT VOUCHER</h3>
                         <p class="mb-0">Date: ${new Date().toLocaleDateString()}</p>
                         <div class="mt-2 d-flex justify-content-end">
-                            <img src="" width="80" height="80">
+                            <img src="${qrDataUrl}" width="80" height="80">
                         </div>
                     </div>
                 </div>
@@ -2477,7 +2477,7 @@ async function printQRLabels() {
             html += `
                 <div class="label-item">
                     <div class="code">${item.itemCode}</div>
-                    <img src="" class="qr-img">
+                    <img src="${qrSrc}" class="qr-img">
                     <div class="meta">${item.brand}</div>
                     <div class="meta">${item.model}</div>
                     <div class="meta" style="font-size:10px; margin-top:5px;">${item.category}</div>
