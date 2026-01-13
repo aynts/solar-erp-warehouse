@@ -2677,8 +2677,6 @@ window.downloadCSV = (tableId, filename) => {
 function toggleLoading(show) {
     document.getElementById('loadingOverlay').classList.toggle('hidden', !show);
 }
-
-initApp();
 import React from 'react';
 // Import the Header component you just created
 import Header from './components/Header'; 
@@ -2697,3 +2695,5 @@ function App() {
 }
 
 export default App;
+initApp();
+
