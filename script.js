@@ -1602,6 +1602,27 @@ window.saveVoucher = async (autoProcess = false) => {
                 });
             }
         }
+
+        // Auto-update PO status if fully received
+        if (type === 'receipt' && relatedPoId) {
+            try {
+                const poRef = doc(db, "vouchers", relatedPoId);
+                const poSnap = await getDoc(poRef);
+                if(poSnap.exists()) {
+                    const poData = poSnap.data();
+                    const totalOrdered = poData.items.reduce((sum, i) => sum + (i.qty || 0), 0);
+                    
+                    const qRec = query(collection(db, "vouchers"), where("relatedPoId", "==", relatedPoId), where("type", "==", "receipt"));
+                    const recSnaps = await getDocs(qRec);
+                    let totalReceived = 0;
+                    recSnaps.forEach(r => { totalReceived += r.data().items.reduce((sum, i) => sum + (i.qty || 0), 0); });
+
+                    if (totalReceived >= totalOrdered) {
+                        await updateDoc(poRef, { status: 'received' });
+                    }
+                }
+            } catch(e) { console.error("PO Status Update Error", e); }
+        }
     }
 
     bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
@@ -1644,8 +1665,16 @@ window.receivePO = async (poId) => {
         });
 
         if(allFullyReceived) {
+            if (po.status === 'ordered' || po.status === 'shipped') {
+                if(confirm("Items fully received. Mark PO as 'Received' on Kanban board?")) {
+                    await updateDoc(doc(db, "vouchers", poId), { status: 'received' });
+                    loadKanban();
+                }
+            } else {
+                alert("This PO is already fully received! (ဤ PO အတွက် ပစ္စည်းများအားလုံး လက်ခံရရှိပြီးဖြစ်ပါသည်)");
+            }
             toggleLoading(false);
-            return alert("This PO is already fully received! (ဤ PO အတွက် ပစ္စည်းများအားလုံး လက်ခံရရှိပြီးဖြစ်ပါသည်)");
+            return;
         }
         
         openVoucherModal('receipt'); 
@@ -2679,4 +2708,3 @@ function toggleLoading(show) {
 }
 
 initApp();
-
