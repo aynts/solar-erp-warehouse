@@ -373,6 +373,11 @@
                         <i class="fas fa-users-cog"></i> Users
                     </a>
                 </li>
+                <li class="nav-item auth-admin-only">
+                    <a class="nav-link" onclick="showView('jobOrderView')" id="nav-jobs">
+                        <i class="fas fa-hard-hat"></i> Job Orders & BOM
+                    </a>
+                </li>
             </ul>
 
             <div class="mt-auto pt-4 border-top border-secondary mt-5">
@@ -1080,6 +1085,40 @@
                 </div>
             </div>
 
+            <!-- JOB ORDER & BOM VIEW (NEW) -->
+            <div id="jobOrderView" class="hidden">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h3 class="fw-bold mb-1">Job Order Management</h3>
+                        <p class="text-muted small mb-0">Quotations, BOMs, and Material Requisition (MRF)</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-secondary btn-sm me-2" onclick="loadJobOrders()"><i class="fas fa-sync"></i> Refresh</button>
+                        <button class="btn btn-primary btn-sm shadow-sm" onclick="openJobOrderModal()">
+                            <i class="fas fa-plus me-1"></i> New Job Order
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Job ID</th>
+                                    <th>Customer / Project</th>
+                                    <th>Date</th>
+                                    <th>Status</th>
+                                    <th>Documents</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="jobOrderTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -1384,8 +1423,7 @@
                             <tr class="text-secondary small text-uppercase">
                                 <th>Item (Search)</th>
                                 <th style="width:100px;">Qty</th>
-                                <th style="width:120px;" class="auth-price-only">Cost/Price</th>
-                                <th style="width:80px;">Qty</th>
+                                <th style="width:120px;">Est. Price</th>
                                 <th>Serial No.</th>
                                 <th style="width:50px;"></th>
                             </tr>
@@ -1421,7 +1459,7 @@
                     <div class="col-6">
                          <div class="text-start">
                             <h4 class="fw-bold text-primary mb-0">Mother Home Solar Co., Ltd.</h4>
-                            <small class="text-muted">Sustainable Energy Solutions</small>
+                            <img src="MHLogo.png" alt="MH Logo" style="height: 80px; margin-top: 5px;">
                         </div>
                     </div>
                     <div class="col-6 text-end">
@@ -1691,6 +1729,94 @@
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-primary w-100" onclick="generateStockMovementReport()">Generate Report</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- JOB ORDER MODAL -->
+<div class="modal fade" id="jobOrderModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header border-bottom-0 pb-0">
+                <h5 class="modal-title fw-bold" id="jobModalTitle">New Job Order</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="jobId">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">CUSTOMER / PROJECT</label>
+                    <div class="input-group">
+                        <input type="text" id="jobCustomer" class="form-control" list="projectList" placeholder="Select or Type...">
+                        <button class="btn btn-outline-secondary" type="button" onclick="openPartyModal('project')"><i class="fas fa-plus"></i></button>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">JOB DATE</label>
+                    <input type="date" id="jobDate" class="form-control">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">DESCRIPTION / SCOPE</label>
+                    <textarea id="jobDesc" class="form-control" rows="2"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">PROJECT DOCUMENTS CHECKLIST</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="docQuote">
+                        <label class="form-check-label" for="docQuote">Quotation Sent</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="docPO">
+                        <label class="form-check-label" for="docPO">Customer PO Received</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="docContract">
+                        <label class="form-check-label" for="docContract">Contract Signed</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="docDiagram">
+                        <label class="form-check-label" for="docDiagram">Diagram/Drawing Approved</label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-top-0 pt-0">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary px-4" onclick="saveJobOrder()">Save Job</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BOM MODAL -->
+<div class="modal fade" id="bomModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title"><i class="fas fa-list-alt me-2"></i>Bill of Materials (BOM) / Quotation</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="bomJobId">
+                <div class="alert alert-light border small mb-3">
+                    <i class="fas fa-info-circle me-1"></i> Define items required for this job. This list can be converted to a <strong>Material Requisition Form (MRF)</strong> later.
+                </div>
+                <table class="table table-sm align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Item Code (Search)</th>
+                            <th style="width:100px">Qty</th>
+                            <th style="width:100px">Stock</th>
+                            <th style="width:50px"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="bomItemsBody"></tbody>
+                </table>
+                <button class="btn btn-sm btn-outline-dark border-dashed w-100" onclick="addBOMRow()">+ Add Item</button>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-warning me-auto" onclick="createPRFromBOM()">Create PR for Shortage</button>
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-success" onclick="saveBOM()">Save BOM</button>
             </div>
         </div>
     </div>

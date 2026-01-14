@@ -298,7 +298,7 @@ function setupUIForUser(email, role) {
 
 // --- VIEW LOGIC ---
 window.showView = (viewId) => {
-    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView'].forEach(id => {
+    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView', 'jobOrderView'].forEach(id => {
         const el = document.getElementById(id);
         if(el) el.classList.add('hidden');
     });
@@ -317,6 +317,7 @@ window.showView = (viewId) => {
     if(viewId === 'usersView') document.getElementById('nav-users').classList.add('active');
     if(viewId === 'suppliersView') document.getElementById('nav-suppliers').classList.add('active');
     if(viewId === 'customersView') document.getElementById('nav-customers').classList.add('active');
+    if(viewId === 'jobOrderView') document.getElementById('nav-jobs').classList.add('active');
 
     if (viewId === 'dashboardView') loadDashboard();
     if (viewId === 'financeView') loadFinanceView();
@@ -328,6 +329,7 @@ window.showView = (viewId) => {
     if (viewId === 'usersView') loadUsers();
     if (viewId === 'suppliersView') loadPartiesView('supplier');
     if (viewId === 'customersView') loadPartiesView('project');
+    if (viewId === 'jobOrderView') loadJobOrders();
 }
 
 // --- FINANCE LOGIC (New) ---
@@ -1485,12 +1487,14 @@ window.addVoucherItemRow = (prefillData = null) => {
     const itemVal = prefillData ? prefillData.itemCode : '';
     const qtyVal = prefillData ? prefillData.qty : 1;
     const serialVal = prefillData ? (prefillData.serials || '') : '';
+    const priceVal = prefillData ? (prefillData.estPrice || '') : '';
     
     const row = `
         <tr>
             <td><input type="text" class="form-control form-control-sm item-search bg-white" list="" placeholder="Search Item Code" value=""></td>
             <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="" oninput="this.value = Math.abs(this.value)"></td>
-            <td><input type="text" class="form-control form-control-sm serial-input bg-white" placeholder="S/N (Optional)" value=""></td>
+            <td><input type="number" class="form-control form-control-sm price-input bg-white" placeholder="Est. Price" value="${priceVal}"></td>
+            <td><input type="text" class="form-control form-control-sm serial-input bg-white" placeholder="S/N (Optional)" value="${serialVal}"></td>
             <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
         </tr>
     `;
@@ -1548,6 +1552,7 @@ window.saveVoucher = async (autoProcess = false) => {
         const code = row.querySelector('.item-search').value;
         const qtyInput = row.querySelector('.qty-input');
         const serialInput = row.querySelector('.serial-input');
+        const priceInput = row.querySelector('.price-input');
         const qty = parseInt(qtyInput.value);
         
         // Negative Check
@@ -1564,7 +1569,18 @@ window.saveVoucher = async (autoProcess = false) => {
                 itemCode: item.itemCode, 
                 itemName: `${item.brand} ${item.model}`,
                 qty: qty, 
-                serials: serialInput ? serialInput.value.trim() : ''
+                serials: serialInput ? serialInput.value.trim() : '',
+                estPrice: priceInput ? parseFloat(priceInput.value) : 0
+            });
+        } else if (type === 'purchase_request' && code && qty > 0) {
+            // Allow Non-Inventory Items for PR
+            items.push({
+                itemId: null,
+                itemCode: code,
+                itemName: code + " (Non-Inventory)",
+                qty: qty,
+                serials: '',
+                estPrice: priceInput ? parseFloat(priceInput.value) : 0
             });
         }
     }
@@ -2224,6 +2240,231 @@ window.printVoucher = async (id) => {
     new bootstrap.Modal(document.getElementById('printModal')).show();
 }
 
+// --- JOB ORDER & BOM MODULE ---
+window.loadJobOrders = async () => {
+    const tbody = document.getElementById('jobOrderTableBody');
+    tbody.innerHTML = '';
+    
+    const q = query(collection(db, "job_orders"), orderBy("date", "desc"));
+    const snap = await getDocs(q);
+    
+    snap.forEach(d => {
+        const job = d.data();
+        const docs = job.docs || {};
+        
+        // Document Badges
+        let docHtml = '';
+        if(docs.quote) docHtml += '<span class="badge bg-info text-dark me-1" title="Quotation Sent">QT</span>';
+        if(docs.po) docHtml += '<span class="badge bg-primary me-1" title="PO Received">PO</span>';
+        if(docs.contract) docHtml += '<span class="badge bg-dark me-1" title="Contract Signed">CN</span>';
+        if(docs.diagram) docHtml += '<span class="badge bg-secondary me-1" title="Diagram Approved">DG</span>';
+        if(!docHtml) docHtml = '<span class="text-muted small">-</span>';
+
+        const statusBadge = job.status === 'Completed' ? 'bg-success' : (job.status === 'MRF Issued' ? 'bg-warning text-dark' : 'bg-secondary');
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="fw-bold text-primary">${d.id.slice(0,6).toUpperCase()}</td>
+                <td>
+                    <div class="fw-bold">${job.customer}</div>
+                    <div class="small text-muted text-truncate" style="max-width: 200px;">${job.desc || ''}</div>
+                </td>
+                <td>${job.date}</td>
+                <td><span class="badge ${statusBadge}">${job.status || 'New'}</span></td>
+                <td>${docHtml}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-dark" onclick="openJobOrderModal('${d.id}')" title="Edit Job"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${d.id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
+                    <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+window.openJobOrderModal = async (id = null) => {
+    const modal = new bootstrap.Modal(document.getElementById('jobOrderModal'));
+    document.getElementById('jobId').value = id || '';
+    
+    if(id) {
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        const job = docSnap.data();
+        document.getElementById('jobCustomer').value = job.customer;
+        document.getElementById('jobDate').value = job.date;
+        document.getElementById('jobDesc').value = job.desc || '';
+        document.getElementById('docQuote').checked = job.docs?.quote || false;
+        document.getElementById('docPO').checked = job.docs?.po || false;
+        document.getElementById('docContract').checked = job.docs?.contract || false;
+        document.getElementById('docDiagram').checked = job.docs?.diagram || false;
+        document.getElementById('jobModalTitle').innerText = "Edit Job Order";
+    } else {
+        document.getElementById('jobCustomer').value = '';
+        document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('jobDesc').value = '';
+        document.querySelectorAll('#jobOrderModal input[type="checkbox"]').forEach(c => c.checked = false);
+        document.getElementById('jobModalTitle').innerText = "New Job Order";
+    }
+    modal.show();
+}
+
+window.saveJobOrder = async () => {
+    const id = document.getElementById('jobId').value;
+    const customer = document.getElementById('jobCustomer').value;
+    if(!customer) return alert("Customer is required");
+
+    const data = {
+        customer: customer,
+        date: document.getElementById('jobDate').value,
+        desc: document.getElementById('jobDesc').value,
+        docs: {
+            quote: document.getElementById('docQuote').checked,
+            po: document.getElementById('docPO').checked,
+            contract: document.getElementById('docContract').checked,
+            diagram: document.getElementById('docDiagram').checked
+        },
+        updatedBy: currentUser.email,
+        updatedAt: serverTimestamp()
+    };
+
+    if(id) {
+        await updateDoc(doc(db, "job_orders", id), data);
+    } else {
+        await addDoc(collection(db, "job_orders"), { ...data, status: 'New', createdAt: serverTimestamp() });
+    }
+    
+    bootstrap.Modal.getInstance(document.getElementById('jobOrderModal')).hide();
+    loadJobOrders();
+}
+
+window.openBOMModal = async (jobId) => {
+    document.getElementById('bomJobId').value = jobId;
+    const tbody = document.getElementById('bomItemsBody');
+    tbody.innerHTML = '';
+    
+    const docSnap = await getDoc(doc(db, "job_orders", jobId));
+    const job = docSnap.data();
+    const bom = job.bom || [];
+    
+    if(bom.length > 0) {
+        bom.forEach(item => addBOMRow(item));
+    } else {
+        addBOMRow();
+    }
+    
+    new bootstrap.Modal(document.getElementById('bomModal')).show();
+}
+
+window.addBOMRow = (data = null) => {
+    const item = data ? inventory.find(i => i.itemCode === data.itemCode) : null;
+    const balance = item ? item.balance : '-';
+    // Highlight if requested qty is greater than balance
+    const balanceClass = (item && item.balance < (data ? data.qty : 0)) ? 'text-danger fw-bold' : 'text-success';
+    
+    const row = `
+        <tr>
+            <td><input type="text" class="form-control form-control-sm bom-item-search" list="inventoryList" placeholder="Search Item..." value="${data ? data.itemCode : ''}" onchange="updateBOMStock(this)"></td>
+            <td><input type="number" class="form-control form-control-sm bom-qty" value="${data ? data.qty : 1}" min="1" onchange="updateBOMStock(this)"></td>
+            <td><span class="bom-stock small ${balanceClass}">${balance}</span></td>
+            <td><button class="btn btn-sm text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
+        </tr>
+    `;
+    document.getElementById('bomItemsBody').insertAdjacentHTML('beforeend', row);
+}
+
+window.updateBOMStock = (el) => {
+    const tr = el.closest('tr');
+    const codeInput = tr.querySelector('.bom-item-search');
+    const qtyInput = tr.querySelector('.bom-qty');
+    const stockSpan = tr.querySelector('.bom-stock');
+    
+    const code = codeInput.value;
+    const qty = parseFloat(qtyInput.value) || 0;
+    const item = inventory.find(i => i.itemCode === code);
+    
+    if(item) {
+        stockSpan.innerText = item.balance;
+        if(item.balance < qty) {
+            stockSpan.className = 'bom-stock small text-danger fw-bold';
+            stockSpan.innerText += " (Low)";
+        } else {
+            stockSpan.className = 'bom-stock small text-success';
+        }
+    } else {
+        stockSpan.innerText = 'N/A';
+        stockSpan.className = 'bom-stock small text-muted';
+    }
+}
+
+window.createPRFromBOM = () => {
+    const rows = document.querySelectorAll('#bomItemsBody tr');
+    const shortageItems = [];
+    
+    rows.forEach(tr => {
+        const code = tr.querySelector('.bom-item-search').value;
+        const qty = parseFloat(tr.querySelector('.bom-qty').value) || 0;
+        if(!code || qty <= 0) return;
+        
+        const item = inventory.find(i => i.itemCode === code);
+        const balance = item ? (item.balance || 0) : 0;
+        
+        // If item doesn't exist (N/A) or balance is less than required
+        if(!item || balance < qty) {
+            const needed = !item ? qty : (qty - balance);
+            shortageItems.push({ itemCode: code, qty: needed, estPrice: 0 });
+        }
+    });
+
+    if(shortageItems.length === 0) return alert("No shortages detected based on current stock.");
+    
+    // Close BOM Modal and Open Voucher Modal
+    bootstrap.Modal.getInstance(document.getElementById('bomModal')).hide();
+    openVoucherModal('purchase_request');
+    
+    // Pre-fill PR
+    document.getElementById('voucherLetterRef').value = "PR-BOM-SHORTAGE";
+    document.getElementById('voucherItemsBody').innerHTML = '';
+    shortageItems.forEach(i => addVoucherItemRow(i));
+    
+    alert(`Generated PR for ${shortageItems.length} missing/low-stock items.`);
+}
+
+window.saveBOM = async () => {
+    const jobId = document.getElementById('bomJobId').value;
+    const rows = document.querySelectorAll('#bomItemsBody tr');
+    const bom = [];
+    
+    rows.forEach(tr => {
+        const code = tr.querySelector('.bom-item-search').value;
+        const qty = parseFloat(tr.querySelector('.bom-qty').value) || 0;
+        if(code && qty > 0) bom.push({ itemCode: code, qty: qty });
+    });
+
+    await updateDoc(doc(db, "job_orders", jobId), { bom: bom, status: 'BOM Created' });
+    bootstrap.Modal.getInstance(document.getElementById('bomModal')).hide();
+    loadJobOrders();
+    alert("BOM Saved Successfully!");
+}
+
+window.createMRF = async (jobId) => {
+    const docSnap = await getDoc(doc(db, "job_orders", jobId));
+    const job = docSnap.data();
+    
+    if(!job.bom || job.bom.length === 0) return alert("Please create a BOM first.");
+    if(!confirm(`Generate Material Requisition Form (Request Voucher) for ${job.customer}?`)) return;
+
+    openVoucherModal('request');
+    document.getElementById('voucherParty').value = job.customer;
+    document.getElementById('voucherLetterRef').value = "MRF-JOB-" + jobId.slice(0,6).toUpperCase();
+    document.getElementById('voucherItemsBody').innerHTML = '';
+    
+    job.bom.forEach(item => {
+        addVoucherItemRow({ itemCode: item.itemCode, qty: item.qty });
+    });
+    
+    await updateDoc(doc(db, "job_orders", jobId), { status: 'MRF Issued' });
+    loadJobOrders(); // Refresh status
+}
+
 // NEW: Print Project Usage Voucher for Finance
 window.printProjectVoucher = async (projectName) => {
     toggleLoading(true);
@@ -2295,7 +2536,7 @@ window.printProjectVoucher = async (projectName) => {
                 <div class="header d-flex justify-content-between align-items-center">
                     <div>
                         <h4 class="fw-bold text-primary mb-0">Mother Home Solar Co., Ltd.</h4>
-                        <small class="text-muted">Project Usage Summary (Invoice Attachment)</small>
+                        <img src="MHLogo.png" alt="MH Logo" style="height: 80px; margin-top: 5px;">
                     </div>
                     <div class="text-end">
                         <h3 class="fw-bold mb-0">PROJECT VOUCHER</h3>
