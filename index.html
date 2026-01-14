@@ -533,6 +533,9 @@
                          <button class="btn btn-white border shadow-sm btn-sm text-secondary" onclick="exportInventoryCSV()">
                             <i class="fas fa-download me-1"></i> Export List
                         </button>
+                        <button class="btn btn-outline-dark btn-sm shadow-sm" onclick="openMovementReportModal()">
+                            <i class="fas fa-chart-bar me-1"></i> Movement Report
+                        </button>
                         <button class="btn btn-dark btn-sm shadow-sm auth-superadmin-only" onclick="openGroundStockModal('import')">
                             <i class="fas fa-file-upload me-1"></i> Import List
                         </button>
@@ -1663,6 +1666,31 @@
                 <button type="button" class="btn btn-primary" onclick="assemblePackage()">
                     <i class="fas fa-hammer me-1"></i> Assemble & Add to Stock
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MOVEMENT REPORT MODAL -->
+<div class="modal fade" id="movementReportModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Stock Movement Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" id="reportStartDate" class="form-control">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">End Date</label>
+                    <input type="date" id="reportEndDate" class="form-control">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary w-100" onclick="generateStockMovementReport()">Generate Report</button>
             </div>
         </div>
     </div>

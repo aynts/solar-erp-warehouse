@@ -136,6 +136,8 @@ async function initApp() {
             window.fetchSystemUsers = fetchSystemUsers;
             window.exportPartiesCSV = exportPartiesCSV;
             window.exportInventoryPDF = exportInventoryPDF;
+            window.openMovementReportModal = openMovementReportModal;
+            window.generateStockMovementReport = generateStockMovementReport;
             window.printVoucherLabels = printVoucherLabels;
             
 
@@ -616,17 +618,12 @@ function generateNextCode() {
     else if(cat === 'Package') prefix = 'PKG';
     else if(cat === 'Fixed Assets') prefix = 'FIX';
     
-    let brandCode = 'GEN';
-    if(brandInput && brandInput.length > 0) {
-        brandCode = brandInput.replace(/[^A-Za-z0-9]/g, '').substring(0, 3).toUpperCase();
-    }
-    
-    const baseCode = `--`;
+    const baseCode = prefix + '-';
     let maxNum = 0;
     inventory.forEach(i => {
         if(i.itemCode && i.itemCode.startsWith(baseCode)) {
             const parts = i.itemCode.split('-');
-            if(parts.length >= 3) {
+            if(parts.length >= 2) {
                 const numStr = parts[parts.length - 1];
                 const num = parseInt(numStr);
                 if(!isNaN(num) && num > maxNum) maxNum = num;
@@ -634,8 +631,8 @@ function generateNextCode() {
         }
     });
     
-    const nextNum = String(maxNum + 1).padStart(3, '0');
-    const finalCode = `${prefix}-${brandCode}-${nextNum}`;
+    const nextNum = String(maxNum + 1).padStart(4, '0');
+    const finalCode = `${prefix}-${nextNum}`;
     document.getElementById('itemCode').value = finalCode;
     
     // Auto-generate QR for preview
@@ -875,8 +872,16 @@ function printSingleQRCode() {
     const itemBrand = document.getElementById('itemBrand').value;
     const itemModel = document.getElementById('itemModel').value;
     const qrContent = document.getElementById('qrCodeContainer').innerHTML;
+    
+    const container = document.getElementById('qrCodeContainer');
+    let qrSrc = '';
+    const img = container.querySelector('img');
+    const canvas = container.querySelector('canvas');
+    if (img && img.src) qrSrc = img.src;
+    else if (canvas) qrSrc = canvas.toDataURL();
 
     if(!itemCode || !qrContent) return alert("Please save item to generate code first.");
+    if(!itemCode || !qrSrc) return alert("Please save item to generate code first.");
 
     const printWindow = window.open('', '', 'height=500,width=500');
     printWindow.document.write('<html><head><title>Print Label</title>');
@@ -890,6 +895,7 @@ function printSingleQRCode() {
     printWindow.document.write('</head><body>');
     printWindow.document.write('<div class="label">');
     printWindow.document.write(qrContent); 
+    printWindow.document.write(`<img src="${qrSrc}" style="width:100px;height:100px;"/>`);
     printWindow.document.write(`<h2></h2>`);
     printWindow.document.write(`<p> - </p>`);
     printWindow.document.write('</div>');
@@ -2163,6 +2169,19 @@ window.printVoucher = async (id) => {
     setTimeout(() => {
         const qrEl = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
         if(qrEl) qrContainer.appendChild(qrEl);
+        let src = '';
+        const img = tempDiv.querySelector('img');
+        const canvas = tempDiv.querySelector('canvas');
+        if(img && img.src) src = img.src;
+        else if(canvas) src = canvas.toDataURL();
+
+        if(src) {
+            const newImg = document.createElement('img');
+            newImg.src = src;
+            newImg.style.width = '80px';
+            newImg.style.height = '80px';
+            qrContainer.appendChild(newImg);
+        }
     }, 50);
 
     if (v.type === 'return' || v.type === 'damage_return') {
@@ -2448,20 +2467,23 @@ async function printQRLabels() {
         <html><head><title>Inventory Smart Labels</title>
         <style>
             body { font-family: sans-serif; }
-            .label-grid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+            .label-grid { display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-start; }
             .label-item { 
-                width: 200px; height: 280px; 
-                border: 1px dotted #ccc; 
-                padding: 10px; 
-                text-align: center; 
-                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                width: 50mm; height: 30mm; 
+                border: 1px dashed #ddd; 
+                padding: 2mm; 
+                box-sizing: border-box;
+                text-align: left; 
+                display: flex; flex-direction: row; align-items: center; justify-content: space-between;
                 page-break-inside: avoid;
             }
-            .qr-img { width: 120px; height: 120px; margin: 10px 0; }
-            .code { font-weight: bold; font-size: 16px; margin-bottom: 5px; }
-            .meta { font-size: 12px; color: #555; }
-            .seq { font-size: 10px; color: #999; margin-top: 5px; }
-            @media print { body { margin: 0; } .label-item { border: 1px solid #eee; } }
+            .qr-container { width: 18mm; text-align: center; }
+            .qr-img { width: 18mm; height: 18mm; }
+            .info-container { flex: 1; padding-left: 3mm; overflow: hidden; }
+            .code { font-weight: bold; font-size: 10pt; margin-bottom: 1mm; white-space: nowrap; }
+            .meta { font-size: 7pt; color: #333; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .cat { font-size: 6pt; color: #666; margin-top: 1mm; text-transform: uppercase; }
+            @media print { body { margin: 0; } .label-item { border: none; outline: 1px dotted #eee; } }
         </style>
         </head><body>
         <div class="label-grid">
@@ -2471,17 +2493,24 @@ async function printQRLabels() {
         if(!item.itemCode) continue;
         const qty = (printPerUnit && item.balance > 0) ? item.balance : 1;
         // Scan Value is full URL for direct access
-        const qrSrc = await generateQR(window.location.origin + window.location.pathname + '?code=' + item.itemCode);
+        const qrSrc = await generateQR(item.itemCode); // Use Code only for cleaner physical scan, or URL if preferred. Keeping URL for app compatibility.
+        // Actually for physical labels, simpler QR is often better for distance scanning. 
+        // But let's stick to URL for app integration as per existing logic, just resized.
+        const qrUrl = window.location.origin + window.location.pathname + '?code=' + item.itemCode;
+        const qrImgSrc = await generateQR(qrUrl);
 
         for(let i=1; i<=qty; i++) {
             html += `
                 <div class="label-item">
-                    <div class="code">${item.itemCode}</div>
-                    <img src="${qrSrc}" class="qr-img">
-                    <div class="meta">${item.brand}</div>
-                    <div class="meta">${item.model}</div>
-                    <div class="meta" style="font-size:10px; margin-top:5px;">${item.category}</div>
-                    ${printPerUnit ? `<div class="seq">Item  of </div>` : ''}
+                    <div class="qr-container">
+                        <img src="${qrImgSrc}" class="qr-img">
+                    </div>
+                    <div class="info-container">
+                        <div class="code">${item.itemCode}</div>
+                        <div class="meta"><b>${item.brand}</b></div>
+                        <div class="meta">${item.model}</div>
+                        <div class="cat">${item.category}</div>
+                    </div>
                 </div>
             `;
         }
@@ -2493,9 +2522,106 @@ async function printQRLabels() {
     let iframe = document.createElement('iframe');
     iframe.style.position = 'absolute'; iframe.style.width = '0px'; iframe.style.height = '0px'; iframe.style.border = 'none';
     document.body.appendChild(iframe);
-    const doc = iframe.contentWindow.document;
-    doc.open(); doc.write(html); doc.close();
+    const printDoc = iframe.contentWindow.document;
+    printDoc.open(); printDoc.write(html); printDoc.close();
     setTimeout(() => { iframe.contentWindow.focus(); iframe.contentWindow.print(); }, 500);
+}
+
+// --- MOVEMENT REPORT LOGIC ---
+window.openMovementReportModal = () => {
+    // Set default dates (First day of month to Today)
+    const today = new Date();
+    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+    
+    document.getElementById('reportStartDate').value = firstDay.toISOString().split('T')[0];
+    document.getElementById('reportEndDate').value = today.toISOString().split('T')[0];
+    
+    new bootstrap.Modal(document.getElementById('movementReportModal')).show();
+}
+
+window.generateStockMovementReport = async () => {
+    const startStr = document.getElementById('reportStartDate').value;
+    const endStr = document.getElementById('reportEndDate').value;
+    
+    if(!startStr || !endStr) return alert("Select date range");
+    
+    const startDate = new Date(startStr);
+    const endDate = new Date(endStr);
+    endDate.setHours(23, 59, 59, 999); // End of day
+
+    toggleLoading(true);
+    
+    try {
+        // Query transactions
+        const q = query(collection(db, "transactions"), 
+            where("date", ">=", startDate), 
+            where("date", "<=", endDate)
+        );
+        
+        const snap = await getDocs(q);
+        const reportData = {}; // Category -> { in: 0, out: 0, count: 0 }
+
+        snap.forEach(d => {
+            const t = d.data();
+            if(!t.itemId) return;
+            
+            // Find item in local inventory to get Category
+            const item = inventory.find(i => i.id === t.itemId);
+            const category = item ? item.category : 'Uncategorized';
+            
+            if(!reportData[category]) {
+                reportData[category] = { in: 0, out: 0, count: 0 };
+            }
+            
+            if(t.type === 'in') reportData[category].in += (t.qty || 0);
+            else if(t.type === 'out') reportData[category].out += (t.qty || 0);
+            
+            reportData[category].count++;
+        });
+
+        // Generate HTML
+        let html = `
+            <html><head><title>Stock Movement Report</title>
+            <style>
+                body { font-family: sans-serif; padding: 20px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f8f9fa; }
+                .text-end { text-align: right; }
+                .header { margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
+            </style>
+            </head><body>
+            <div class="header">
+                <h2>Stock Movement by Category</h2>
+                <p>Period: ${startStr} to ${endStr}</p>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>Category</th><th class="text-end">Total In (Qty)</th><th class="text-end">Total Out (Qty)</th><th class="text-end">Net Change</th><th class="text-end">Transactions</th></tr>
+                </thead>
+                <tbody>
+        `;
+        
+        Object.keys(reportData).sort().forEach(cat => {
+            const d = reportData[cat];
+            const net = d.in - d.out;
+            const netClass = net >= 0 ? 'text-success' : 'text-danger';
+            html += `<tr><td><strong>${cat}</strong></td><td class="text-end text-success">${d.in}</td><td class="text-end text-danger">${d.out}</td><td class="text-end ${netClass}"><strong>${net > 0 ? '+' : ''}${net}</strong></td><td class="text-end">${d.count}</td></tr>`;
+        });
+        
+        html += `</tbody></table></body></html>`;
+        
+        const win = window.open('', '_blank');
+        win.document.write(html);
+        win.document.close();
+        
+        bootstrap.Modal.getInstance(document.getElementById('movementReportModal')).hide();
+
+    } catch(e) {
+        console.error(e);
+        alert("Error generating report: " + e.message);
+    }
+    toggleLoading(false);
 }
 
 // --- FINANCE EXPORT LOGIC ---
@@ -2938,8 +3064,8 @@ window.printVoucherLabels = async (id) => {
         const iframe = document.createElement('iframe');
         iframe.style.position = 'absolute'; iframe.style.width = '0px'; iframe.style.height = '0px'; iframe.style.border = 'none';
         document.body.appendChild(iframe);
-        const doc = iframe.contentWindow.document;
-        doc.open(); doc.write(html); doc.close();
+        const printDoc = iframe.contentWindow.document;
+        printDoc.open(); printDoc.write(html); printDoc.close();
         setTimeout(() => { iframe.contentWindow.focus(); iframe.contentWindow.print(); }, 500);
 
     } catch(e) { console.error(e); alert("Error: " + e.message); }
