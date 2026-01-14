@@ -1098,6 +1098,9 @@
                         <button class="btn btn-outline-success btn-sm me-2" onclick="openJobCostReport()">
                             <i class="fas fa-chart-line me-1"></i> Cost Report
                         </button>
+                        <button class="btn btn-outline-info btn-sm me-2" onclick="openStaffReport()">
+                            <i class="fas fa-users me-1"></i> Staff Report
+                        </button>
                         <button class="btn btn-primary btn-sm shadow-sm" onclick="openJobOrderModal()">
                             <i class="fas fa-plus me-1"></i> New Job Order
                         </button>
@@ -1839,6 +1842,37 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 <button type="button" class="btn btn-primary" onclick="downloadCSV('jobCostReportBody', 'job_cost_report.csv')">Export CSV</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- STAFF REPORT MODAL -->
+<div class="modal fade" id="staffReportModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold">Staff Performance Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Staff Name</th>
+                                <th class="text-center">Total Jobs</th>
+                                <th class="text-center">Completed</th>
+                                <th class="text-center">Active</th>
+                                <th class="text-center">% Done</th>
+                            </tr>
+                        </thead>
+                        <tbody id="staffReportBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>

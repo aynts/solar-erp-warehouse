@@ -139,6 +139,7 @@ async function initApp() {
             window.openMovementReportModal = openMovementReportModal;
             window.generateStockMovementReport = generateStockMovementReport;
             window.openJobCostReport = openJobCostReport;
+            window.openStaffReport = openStaffReport;
             window.printVoucherLabels = printVoucherLabels;
             window.autoFillJobDetails = autoFillJobDetails;
             
@@ -2340,8 +2341,8 @@ window.printJobOrder = async (id) => {
         document.getElementById('printReqBy').innerText = job.updatedBy || 'Admin';
         document.getElementById('label2').innerText = "Approved By";
         document.getElementById('printAppBy').innerText = "________________";
-        document.getElementById('label3').innerText = "Customer Accepted";
-        document.getElementById('printRecBy').innerText = "________________";
+        document.getElementById('label3').innerText = "Staff Signature";
+        document.getElementById('printRecBy').innerText = job.assignedStaff || "________________";
 
         // Table (BOM)
         const tbody = document.getElementById('printTableBody');
@@ -2626,6 +2627,44 @@ window.openJobCostReport = async () => {
         });
         
         new bootstrap.Modal(document.getElementById('jobCostReportModal')).show();
+    } catch(e) { console.error(e); alert("Error generating report"); }
+    toggleLoading(false);
+}
+
+window.openStaffReport = async () => {
+    toggleLoading(true);
+    try {
+        const q = query(collection(db, "job_orders"));
+        const snap = await getDocs(q);
+        
+        const stats = {};
+        
+        snap.forEach(d => {
+            const job = d.data();
+            const staff = job.assignedStaff || 'Unassigned';
+            
+            if(!stats[staff]) stats[staff] = { total: 0, completed: 0 };
+            
+            stats[staff].total++;
+            if(job.status === 'Completed') stats[staff].completed++;
+        });
+        
+        const tbody = document.getElementById('staffReportBody');
+        tbody.innerHTML = '';
+        
+        const sortedStaff = Object.keys(stats).sort((a,b) => stats[b].total - stats[a].total);
+        
+        sortedStaff.forEach(name => {
+            const s = stats[name];
+            const pending = s.total - s.completed;
+            const rate = s.total > 0 ? Math.round((s.completed / s.total) * 100) : 0;
+            
+            let rateClass = rate >= 80 ? 'text-success fw-bold' : (rate < 50 ? 'text-warning fw-bold' : 'text-muted');
+            
+            tbody.innerHTML += `<tr><td class="fw-bold">${name}</td><td class="text-center">${s.total}</td><td class="text-center text-success">${s.completed}</td><td class="text-center text-secondary">${pending}</td><td class="text-center ${rateClass}">${rate}%</td></tr>`;
+        });
+        
+        new bootstrap.Modal(document.getElementById('staffReportModal')).show();
     } catch(e) { console.error(e); alert("Error generating report"); }
     toggleLoading(false);
 }
