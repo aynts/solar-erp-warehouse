@@ -145,6 +145,7 @@ async function initApp() {
             window.printVoucherLabels = printVoucherLabels;
             window.autoFillJobDetails = autoFillJobDetails;
             window.toggleJobView = toggleJobView;
+            window.printProjectSignOff = printProjectSignOff;
             
 
             // --- QR INTEGRATION ---
@@ -2046,6 +2047,8 @@ window.loadKanban = async () => {
     
     const counts = { requested: 0, ordered: 0, shipped: 0, partial: 0, received: 0, completed: 0 };
     
+    const canReceive = ['warehouse', 'admin', 'superadmin'].includes(currentUserRole);
+    
     // Clear columns
     Object.values(cols).forEach(c => c.innerHTML = '');
 
@@ -2067,11 +2070,19 @@ window.loadKanban = async () => {
             } else if (v.status === 'shipped') {
                 target = 'shipped';
                 statusClass = 'status-shipped';
-                actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Items</button>`;
+                if (canReceive) {
+                    actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Items</button>`;
+                } else {
+                    actions = `<div class="text-center mt-2 small text-muted fst-italic">Pending Warehouse Receipt</div>`;
+                }
             } else if (v.status === 'partially_received') {
                 target = 'partial';
                 statusClass = 'status-partially-received';
-                actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Remaining</button>`;
+                if (canReceive) {
+                    actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Remaining</button>`;
+                } else {
+                    actions = `<div class="text-center mt-2 small text-muted fst-italic">Pending Warehouse Receipt</div>`;
+                }
             } else if (v.status === 'received') {
                 target = 'received';
                 statusClass = 'status-received';
@@ -2173,6 +2184,12 @@ window.approveVoucher = async (id, type) => {
     }
     
     await updateDoc(vRef, { status: 'approved' });
+
+    // AUTOMATIC JOB STATUS UPDATE (Warehouse -> Job Order)
+    if (v.jobId) {
+        await updateDoc(doc(db, "job_orders", v.jobId), { status: 'Work in Progress' });
+    }
+
     loadVouchers();
     filterInventory(); // Update UI
     // loadProjectUsage(); // We can reload this lazily when view is clicked
@@ -2190,7 +2207,8 @@ window.printVoucher = async (id) => {
     if (v.type === 'receipt') title = "GOODS RECEIPT NOTE (GRN)";
     else if (v.type === 'request') {
         // Detect MRF or Standard DO
-        if (v.ref && v.ref.includes('MRF')) title = "MATERIAL REQUISITION FORM (MRF)";
+        if (v.status === 'approved') title = "STOCK ISSUE NOTE";
+        else if (v.ref && v.ref.includes('MRF')) title = "MATERIAL REQUISITION FORM (MRF)";
         else title = "DELIVERY ORDER (DO)";
     }
     else if (v.type === 'return') title = "MATERIAL RETURN NOTE";
@@ -2334,6 +2352,7 @@ window.loadJobOrders = async () => {
                     <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${d.id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
                     ${job.status !== 'Completed' ? `<button class="btn btn-sm btn-success ms-1" onclick="updateJobStatus('${d.id}', 'Completed')" title="Signoff / Complete Project"><i class="fas fa-check"></i></button>` : ''}
+                    ${job.status === 'Completed' ? `<button class="btn btn-sm btn-outline-dark ms-1" onclick="printProjectSignOff('${d.id}')" title="Print Sign-off Document"><i class="fas fa-file-signature"></i></button>` : ''}
                 </td>
             </tr>
         `;
@@ -2713,6 +2732,10 @@ window.createMRF = async (jobId) => {
     const docSnap = await getDoc(doc(db, "job_orders", jobId));
     const job = docSnap.data();
     
+    if(job.status === 'MRF Issued' || job.status === 'Work in Progress' || job.status === 'Completed') {
+        if(!confirm("Warning: An MRF has likely already been issued for this job.\n\nCurrent Status: " + job.status + "\n\nCreate another MRF anyway?")) return;
+    }
+
     if(!job.bom || job.bom.length === 0) return alert("Please create a BOM first.");
     if(!confirm(`Generate Material Requisition Form (Request Voucher) for ${job.customer}?`)) return;
 
@@ -2734,6 +2757,7 @@ window.createMRF = async (jobId) => {
             type: 'request',
             party: job.customer,
             ref: "MRF-" + jobId.slice(0,6).toUpperCase(),
+            jobId: jobId, // Link back to Job Order
             date: new Date().toISOString().split('T')[0],
             status: 'pending', // Send directly to Warehouse as Pending
             items: items,
@@ -2807,6 +2831,82 @@ window.openJobCostReport = async () => {
         
         new bootstrap.Modal(document.getElementById('jobCostReportModal')).show();
     } catch(e) { console.error(e); alert("Error generating report"); }
+    toggleLoading(false);
+}
+
+window.printProjectSignOff = async (id) => {
+    toggleLoading(true);
+    try {
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        if(!docSnap.exists()) { toggleLoading(false); return; }
+        const job = docSnap.data();
+
+        const printWindow = window.open('', '', 'height=800,width=900');
+        printWindow.document.write('<html><head><title>Project Sign-off</title>');
+        printWindow.document.write('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">');
+        printWindow.document.write('<style>body{padding:40px; font-family: "Times New Roman", serif;} .header{border-bottom: 2px solid #000; padding-bottom: 20px; margin-bottom: 30px;} .sign-line{border-top: 1px solid #000; width: 80%; margin: 0 auto; padding-top: 5px;}</style>');
+        printWindow.document.write('</head><body>');
+        
+        printWindow.document.write(`
+            <div class="container">
+                <div class="header text-center">
+                    <h2 class="fw-bold text-uppercase">Project Completion & Acceptance Certificate</h2>
+                    <h5 class="text-muted">Mother Home Solar Co., Ltd.</h5>
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-6">
+                        <p><strong>Customer / Project:</strong><br>${job.customer}</p>
+                        <p><strong>Site Address:</strong><br>${job.address || 'N/A'}</p>
+                    </div>
+                    <div class="col-6 text-end">
+                        <p><strong>Job Order Ref:</strong> ${id.slice(0,8).toUpperCase()}</p>
+                        <p><strong>Completion Date:</strong> ${new Date().toLocaleDateString()}</p>
+                    </div>
+                </div>
+
+                <div class="mb-5">
+                    <h5 class="fw-bold border-bottom pb-2">Project Scope / Description</h5>
+                    <p class="p-3 bg-light border rounded">${job.desc || 'No description provided.'}</p>
+                </div>
+
+                <div class="mb-5">
+                    <h5 class="fw-bold border-bottom pb-2">Declaration of Acceptance</h5>
+                    <p>
+                        This document certifies that the solar energy system/installation described above has been 
+                        completed, tested, and commissioned in accordance with the agreed specifications.
+                    </p>
+                    <p>
+                        The client acknowledges that the system is fully operational and free from visible defects 
+                        at the time of handover. Training on basic operation and safety has been provided.
+                    </p>
+                </div>
+
+                <div class="row mt-5 pt-5">
+                    <div class="col-6 text-center">
+                        <div class="mb-5"></div>
+                        <div class="sign-line">
+                            <strong>Authorized Signature</strong><br>
+                            Mother Home Solar Co., Ltd.<br>
+                            <small>(Project Manager / Engineer)</small>
+                        </div>
+                    </div>
+                    <div class="col-6 text-center">
+                        <div class="mb-5"></div>
+                        <div class="sign-line">
+                            <strong>Customer Acceptance</strong><br>
+                            ${job.customer}<br>
+                            <small>(Signature & Stamp)</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `);
+        
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        setTimeout(() => { printWindow.print(); }, 1000);
+    } catch(e) { console.error(e); alert("Error generating sign-off document"); }
     toggleLoading(false);
 }
 
@@ -3797,8 +3897,13 @@ async function renderCalendar() {
             const end = job.endDate || job.date; // Default to single day if no end date
             
             if (dateStr >= start && dateStr <= end) {
-                const staff = Array.isArray(job.assignedStaff) ? (job.assignedStaff.length > 0 ? job.assignedStaff[0].split(' ')[0] + (job.assignedStaff.length>1 ? ' +' : '') : '?') : (job.assignedStaff ? job.assignedStaff.split(' ')[0] : '?');
-                dayEvents += `<div class="cal-event" onclick="openJobOrderModal('${job.id}')" title="${job.customer} (${staff})">${job.customer}</div>`;
+                const staffName = Array.isArray(job.assignedStaff) ? (job.assignedStaff.length > 0 ? job.assignedStaff[0].split(' ')[0] : 'Unassigned') : (job.assignedStaff ? job.assignedStaff.split(' ')[0] : 'Unassigned');
+                const statusColor = job.status === 'Completed' ? '#198754' : (job.status === 'Work in Progress' ? '#0dcaf0' : '#ffc107');
+                const statusDot = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background-color:${statusColor};margin-right:4px;"></span>`;
+                
+                dayEvents += `<div class="cal-event" onclick="openJobOrderModal('${job.id}')" title="${job.customer} - ${job.status}">
+                    ${statusDot} <strong>${staffName}</strong>: ${job.customer.substring(0, 12)}..
+                </div>`;
             }
         });
 
