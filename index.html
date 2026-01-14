@@ -1158,7 +1158,6 @@
                                     <th>Customer / Project</th>
                                     <th>Date</th>
                                     <th>Status</th>
-                                    <th>Documents</th>
                                     <th class="text-end">Actions</th>
                                 </tr>
                             </thead>
@@ -1809,6 +1808,7 @@
                         <option value="New">New</option>
                         <option value="MRF Issued">MRF Issued</option>
                         <option value="Work in Progress">Work in Progress</option>
+                        <option value="Partially Completed">Partially Completed</option>
                         <option value="Completed">Completed</option>
                         <option value="Cancelled">Cancelled</option>
                     </select>
@@ -1842,25 +1842,6 @@
                 <div class="mb-3">
                     <label class="form-label small fw-bold text-secondary">DESCRIPTION / SCOPE</label>
                     <textarea id="jobDesc" class="form-control" rows="2"></textarea>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label small fw-bold text-secondary">PROJECT DOCUMENTS CHECKLIST</label>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="docQuote">
-                        <label class="form-check-label" for="docQuote">Quotation Sent</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="docPO">
-                        <label class="form-check-label" for="docPO">Customer PO Received</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="docContract">
-                        <label class="form-check-label" for="docContract">Contract Signed</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" id="docDiagram">
-                        <label class="form-check-label" for="docDiagram">Diagram/Drawing Approved</label>
-                    </div>
                 </div>
             </div>
             <div class="modal-footer border-top-0 pt-0">

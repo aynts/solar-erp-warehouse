@@ -1576,6 +1576,17 @@ window.saveVoucher = async (autoProcess = false) => {
     const ref = document.getElementById('voucherLetterRef')?.value || '';
     const relatedPoId = document.getElementById('relatedPoId').value;
     
+    // --- PROJECT VALIDATION: Check if Project is Completed (for Requests) ---
+    if (type === 'request') {
+        toggleLoading(true);
+        const qJob = query(collection(db, "job_orders"), where("customer", "==", party), where("status", "==", "Completed"));
+        const jobSnap = await getDocs(qJob);
+        toggleLoading(false);
+        if (!jobSnap.empty) {
+            if(!confirm(`PROJECT WARNING:\n\nThe project "${party}" is marked as COMPLETED.\n\nDo you really want to issue more stock?`)) return;
+        }
+    }
+
     const rows = document.querySelectorAll('#voucherItemsBody tr');
     let items = [];
     for(let row of rows) {
@@ -1965,6 +1976,8 @@ window.loadVouchers = async () => {
             rBody.innerHTML += row;
         } 
         else if (v.type === 'request') {
+            // Added Job Link for Warehouse to Check Job Order before Issuing
+            const jobLink = v.jobId ? `<button class="btn btn-sm btn-outline-info ms-1" onclick="openJobOrderModal('${v.jobId}')" title="Check Job Order Details"><i class="fas fa-hard-hat"></i></button>` : '';
             const row = `
             <tr>
                 <td>${v.date}</td>
@@ -1974,6 +1987,7 @@ window.loadVouchers = async () => {
                 <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
                 <td>
                     <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
+                    ${jobLink}
                     ${(v.status === 'draft' || v.status === 'pending') ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Issue Stock</button>` : ''}
                 </td>
             </tr>`;
@@ -2321,17 +2335,7 @@ window.loadJobOrders = async () => {
     
     snap.forEach(d => {
         const job = d.data();
-        const docs = job.docs || {};
-        
-        // Document Badges
-        let docHtml = '';
-        if(docs.quote) docHtml += '<span class="badge bg-info text-dark me-1" title="Quotation Sent">QT</span>';
-        if(docs.po) docHtml += '<span class="badge bg-primary me-1" title="PO Received">PO</span>';
-        if(docs.contract) docHtml += '<span class="badge bg-dark me-1" title="Contract Signed">CN</span>';
-        if(docs.diagram) docHtml += '<span class="badge bg-secondary me-1" title="Diagram Approved">DG</span>';
-        if(!docHtml) docHtml = '<span class="text-muted small">-</span>';
 
-        const statusBadge = job.status === 'Completed' ? 'bg-success' : (job.status === 'MRF Issued' ? 'bg-warning text-dark' : 'bg-secondary');
         const staffList = Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : (job.assignedStaff || '');
         const staffDisplay = staffList ? `<div class="small text-info"><i class="fas fa-user-hard-hat me-1"></i>${staffList}</div>` : '';
 
@@ -2344,14 +2348,23 @@ window.loadJobOrders = async () => {
                     <div class="small text-muted text-truncate" style="max-width: 200px;">${job.desc || ''}</div>
                 </td>
                 <td>${job.date}</td>
-                <td><span class="badge ${statusBadge}">${job.status || 'New'}</span></td>
-                <td>${docHtml}</td>
+                <td>
+                    <select onchange="updateJobStatus('${d.id}', this.value)" class="form-select form-select-sm" style="width:auto; min-width:130px; font-size:0.85rem;">
+                        <option value="New" ${job.status==='New'?'selected':''}>New</option>
+                        <option value="MRF Issued" ${job.status==='MRF Issued'?'selected':''}>MRF Issued</option>
+                        <option value="Work in Progress" ${job.status==='Work in Progress'?'selected':''}>Work in Progress</option>
+                        <option value="Partially Completed" ${job.status==='Partially Completed'?'selected':''}>Partially Completed</option>
+                        <option value="Completed" ${job.status==='Completed'?'selected':''}>Completed</option>
+                        <option value="Cancelled" ${job.status==='Cancelled'?'selected':''}>Cancelled</option>
+                    </select>
+                </td>
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-dark" onclick="openJobOrderModal('${d.id}')" title="Edit Job"><i class="fas fa-edit"></i></button>
                     <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${d.id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
                     <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${d.id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
                     ${job.status !== 'Completed' ? `<button class="btn btn-sm btn-success ms-1" onclick="updateJobStatus('${d.id}', 'Completed')" title="Signoff / Complete Project"><i class="fas fa-check"></i></button>` : ''}
+                    ${(job.status === 'Work in Progress' || job.status === 'MRF Issued') ? `<button class="btn btn-sm btn-info text-white ms-1" onclick="updateJobStatus('${d.id}', 'Partially Completed')" title="Mark Partial Completion"><i class="fas fa-hourglass-half"></i></button>` : ''}
                     ${job.status === 'Completed' ? `<button class="btn btn-sm btn-outline-dark ms-1" onclick="printProjectSignOff('${d.id}')" title="Print Sign-off Document"><i class="fas fa-file-signature"></i></button>` : ''}
                 </td>
             </tr>
@@ -2420,7 +2433,7 @@ async function renderGanttChart() {
         const left = offsetDays * dayWidth;
         const width = durationDays * dayWidth;
         
-        const colorClass = job.status === 'Completed' ? '#198754' : (job.status === 'New' ? '#0d6efd' : '#ffc107');
+        const colorClass = job.status === 'Completed' ? '#198754' : (job.status === 'Partially Completed' ? '#0dcaf0' : (job.status === 'New' ? '#0d6efd' : '#ffc107'));
         const textColor = job.status === 'MRF Issued' ? '#000' : '#fff';
 
         headerHtml += `
@@ -2532,10 +2545,6 @@ window.openJobOrderModal = async (id = null) => {
         document.getElementById('jobPhone').value = job.phone || '';
         document.getElementById('jobAddress').value = job.address || '';
         document.getElementById('jobDesc').value = job.desc || '';
-        document.getElementById('docQuote').checked = job.docs?.quote || false;
-        document.getElementById('docPO').checked = job.docs?.po || false;
-        document.getElementById('docContract').checked = job.docs?.contract || false;
-        document.getElementById('docDiagram').checked = job.docs?.diagram || false;
         document.getElementById('jobModalTitle').innerText = "Edit Job Order";
     } else {
         document.getElementById('jobCustomer').value = '';
@@ -2545,7 +2554,6 @@ window.openJobOrderModal = async (id = null) => {
         document.getElementById('jobPhone').value = '';
         document.getElementById('jobAddress').value = '';
         document.getElementById('jobDesc').value = '';
-        document.querySelectorAll('#jobOrderModal input[type="checkbox"]').forEach(c => c.checked = false);
         document.getElementById('jobModalTitle').innerText = "New Job Order";
     }
 
@@ -2592,12 +2600,6 @@ window.saveJobOrder = async () => {
         phone: document.getElementById('jobPhone').value,
         address: document.getElementById('jobAddress').value,
         desc: document.getElementById('jobDesc').value,
-        docs: {
-            quote: document.getElementById('docQuote').checked,
-            po: document.getElementById('docPO').checked,
-            contract: document.getElementById('docContract').checked,
-            diagram: document.getElementById('docDiagram').checked
-        },
         updatedBy: currentUser.email,
         updatedAt: serverTimestamp()
     };
@@ -2614,7 +2616,32 @@ window.saveJobOrder = async () => {
 }
 
 window.updateJobStatus = async (id, status) => {
-    if(!confirm(`Mark this project as ${status}?`)) return;
+    if (status === 'Completed') {
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        const job = docSnap.data();
+
+        // Check for pending vouchers
+        const qV = query(collection(db, "vouchers"), where("party", "==", job.customer), where("status", "==", "pending"));
+        const vSnap = await getDocs(qV);
+        if (!vSnap.empty) {
+            return alert(`Cannot Complete: There are ${vSnap.size} pending MRF/Vouchers for this project. Please process or reject them first.`);
+        }
+
+        if(!confirm(`Mark project "${job.customer}" as COMPLETED?\n\nThis will lock the project and update status in Project Usage view.`)) return;
+        
+        // Sync to project_status collection
+        await setDoc(doc(db, "project_status", job.customer), { status: 'completed' }, { merge: true });
+    } else if (status === 'Partially Completed') {
+        if(!confirm(`Mark project as PARTIALLY COMPLETED?\n\nThis indicates some tasks are done but the project is still active.`)) return;
+        
+        // Ensure project_status is active
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        const job = docSnap.data();
+        await setDoc(doc(db, "project_status", job.customer), { status: 'active' }, { merge: true });
+    } else {
+        if(!confirm(`Mark this project as ${status}?`)) return;
+    }
+
     await updateDoc(doc(db, "job_orders", id), { status: status });
     loadJobOrders();
 }
@@ -2732,8 +2759,8 @@ window.createMRF = async (jobId) => {
     const docSnap = await getDoc(doc(db, "job_orders", jobId));
     const job = docSnap.data();
     
-    if(job.status === 'MRF Issued' || job.status === 'Work in Progress' || job.status === 'Completed') {
-        if(!confirm("Warning: An MRF has likely already been issued for this job.\n\nCurrent Status: " + job.status + "\n\nCreate another MRF anyway?")) return;
+    if(job.status === 'Completed' || job.status === 'Cancelled') {
+        if(!confirm("This project is marked as " + job.status + ". Create MRF anyway?")) return;
     }
 
     if(!job.bom || job.bom.length === 0) return alert("Please create a BOM first.");
@@ -3533,6 +3560,18 @@ async function loadProjectUsage() {
 window.toggleProjectStatus = async (projectName, newStatus) => {
     if(!confirm(`Change status of "" to ${newStatus.toUpperCase()}?`)) return;
     await setDoc(doc(db, "project_status", projectName), { status: newStatus }, { merge: true });
+    
+    // Sync with Job Orders
+    const q = query(collection(db, "job_orders"), where("customer", "==", projectName));
+    const snap = await getDocs(q);
+    const jobStatus = newStatus === 'completed' ? 'Completed' : 'Work in Progress';
+    
+    const batch = writeBatch(db);
+    snap.forEach(d => {
+        batch.update(d.ref, { status: jobStatus });
+    });
+    if(!snap.empty) await batch.commit();
+
     loadProjectUsage();
 }
 
@@ -3898,7 +3937,7 @@ async function renderCalendar() {
             
             if (dateStr >= start && dateStr <= end) {
                 const staffName = Array.isArray(job.assignedStaff) ? (job.assignedStaff.length > 0 ? job.assignedStaff[0].split(' ')[0] : 'Unassigned') : (job.assignedStaff ? job.assignedStaff.split(' ')[0] : 'Unassigned');
-                const statusColor = job.status === 'Completed' ? '#198754' : (job.status === 'Work in Progress' ? '#0dcaf0' : '#ffc107');
+                const statusColor = job.status === 'Completed' ? '#198754' : (job.status === 'Partially Completed' ? '#0dcaf0' : (job.status === 'Work in Progress' ? '#0d6efd' : '#ffc107'));
                 const statusDot = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background-color:${statusColor};margin-right:4px;"></span>`;
                 
                 dayEvents += `<div class="cal-event" onclick="openJobOrderModal('${job.id}')" title="${job.customer} - ${job.status}">
