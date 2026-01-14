@@ -1136,6 +1136,10 @@
                         <p class="text-muted small mb-0">Quotations, BOMs, and Material Requisition (MRF)</p>
                     </div>
                     <div>
+                        <div class="btn-group me-2" role="group">
+                            <button type="button" class="btn btn-sm btn-outline-secondary active" id="btnJobListView" onclick="toggleJobView('list')"><i class="fas fa-list"></i> List</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="btnJobGanttView" onclick="toggleJobView('gantt')"><i class="fas fa-stream"></i> Gantt</button>
+                        </div>
                         <button class="btn btn-outline-secondary btn-sm me-2" onclick="loadJobOrders()"><i class="fas fa-sync"></i> Refresh</button>
                         <button class="btn btn-outline-success btn-sm me-2" onclick="openJobCostReport()">
                             <i class="fas fa-chart-line me-1"></i> Cost Report
@@ -1149,7 +1153,7 @@
                     </div>
                 </div>
 
-                <div class="card">
+                <div class="card" id="jobListContainer">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle mb-0">
                             <thead class="table-light">
@@ -1165,6 +1169,11 @@
                             <tbody id="jobOrderTableBody"></tbody>
                         </table>
                     </div>
+                </div>
+
+                <!-- GANTT CHART CONTAINER -->
+                <div class="card hidden" id="jobGanttContainer">
+                    <div class="card-body p-0" id="ganttChartArea"></div>
                 </div>
             </div>
 

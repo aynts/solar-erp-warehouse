@@ -144,6 +144,7 @@ async function initApp() {
             window.openStaffReport = openStaffReport;
             window.printVoucherLabels = printVoucherLabels;
             window.autoFillJobDetails = autoFillJobDetails;
+            window.toggleJobView = toggleJobView;
             
 
             // --- QR INTEGRATION ---
@@ -1263,6 +1264,26 @@ window.generateDemoData = async () => {
         }
         await loadInventory(true); // Refresh inventory
 
+        // 2.5 Create Job Orders (NEW)
+        const today = new Date();
+        const jobs = [
+            { cust: customers[0], start: 0, dur: 10, status: 'MRF Issued', staff: ['U Phyo'] },
+            { cust: customers[1], start: 5, dur: 15, status: 'New', staff: ['Ko Mg Mg'] },
+            { cust: customers[2], start: -5, dur: 12, status: 'Completed', staff: ['Ma Zar Zar Naing'] }
+        ];
+
+        for(const j of jobs) {
+            const sDate = new Date(today); sDate.setDate(today.getDate() + j.start);
+            const eDate = new Date(sDate); eDate.setDate(sDate.getDate() + j.dur);
+            
+            await addDoc(collection(db, "job_orders"), {
+                customer: j.cust, date: sDate.toISOString().split('T')[0], endDate: eDate.toISOString().split('T')[0],
+                status: j.status, assignedStaff: j.staff, desc: "Demo Project Installation",
+                phone: "0912345678", address: "Demo Site Address",
+                createdAt: serverTimestamp(), updatedBy: currentUser.email
+            });
+        }
+
         // 3. Create Vouchers & Transactions
         // PO
         await addDoc(collection(db, "vouchers"), {
@@ -2257,6 +2278,22 @@ window.printVoucher = async (id) => {
 }
 
 // --- JOB ORDER & BOM MODULE ---
+window.toggleJobView = (view) => {
+    const listBtn = document.getElementById('btnJobListView');
+    const ganttBtn = document.getElementById('btnJobGanttView');
+    const listCont = document.getElementById('jobListContainer');
+    const ganttCont = document.getElementById('jobGanttContainer');
+
+    if(view === 'list') {
+        listBtn.classList.add('active'); ganttBtn.classList.remove('active');
+        listCont.classList.remove('hidden'); ganttCont.classList.add('hidden');
+    } else {
+        listBtn.classList.remove('active'); ganttBtn.classList.add('active');
+        listCont.classList.add('hidden'); ganttCont.classList.remove('hidden');
+        renderGanttChart();
+    }
+}
+
 window.loadJobOrders = async () => {
     const tbody = document.getElementById('jobOrderTableBody');
     tbody.innerHTML = '';
@@ -2300,6 +2337,88 @@ window.loadJobOrders = async () => {
             </tr>
         `;
     });
+    
+    // If Gantt is active, refresh it too
+    if(!document.getElementById('jobGanttContainer').classList.contains('hidden')) {
+        renderGanttChart();
+    }
+}
+
+async function renderGanttChart() {
+    const container = document.getElementById('ganttChartArea');
+    container.innerHTML = '<div class="text-center p-5"><div class="spinner-border text-primary"></div></div>';
+
+    const q = query(collection(db, "job_orders"), orderBy("date", "asc"));
+    const snap = await getDocs(q);
+    const jobs = [];
+    snap.forEach(d => jobs.push({id: d.id, ...d.data()}));
+
+    if(jobs.length === 0) {
+        container.innerHTML = '<div class="text-center p-5 text-muted">No jobs found.</div>';
+        return;
+    }
+
+    // 1. Determine Date Range
+    let minDate = new Date();
+    let maxDate = new Date();
+    
+    jobs.forEach(j => {
+        const s = new Date(j.date);
+        const e = j.endDate ? new Date(j.endDate) : new Date(s);
+        if(s < minDate) minDate = s;
+        if(e > maxDate) maxDate = e;
+    });
+    
+    // Add buffer (5 days before, 10 days after)
+    minDate.setDate(minDate.getDate() - 5);
+    maxDate.setDate(maxDate.getDate() + 15);
+
+    const dayWidth = 40; // px
+    const totalDays = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+    
+    // 2. Build Header
+    let headerHtml = '<div class="gantt-wrapper"><div class="gantt-header">';
+    for(let i=0; i<=totalDays; i++) {
+        const d = new Date(minDate); d.setDate(minDate.getDate() + i);
+        const dayNum = d.getDate();
+        const dayName = d.toLocaleDateString('en-US', {weekday: 'narrow'});
+        headerHtml += `<div class="gantt-header-cell">${dayNum}<br><span style="font-weight:normal;opacity:0.7">${dayName}</span></div>`;
+    }
+    headerHtml += '</div><div class="gantt-body">';
+
+    // 3. Build Rows
+    const today = new Date();
+    const todayOffset = Math.ceil((today - minDate) / (1000 * 60 * 60 * 24)) * dayWidth;
+
+    jobs.forEach(job => {
+        const start = new Date(job.date);
+        const end = job.endDate ? new Date(job.endDate) : new Date(start);
+        
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1); // +1 to include end day
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = job.status === 'Completed' ? '#198754' : (job.status === 'New' ? '#0d6efd' : '#ffc107');
+        const textColor = job.status === 'MRF Issued' ? '#000' : '#fff';
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass}; color: ${textColor};" onclick="openJobOrderModal('${job.id}')" title="${job.customer} (${job.status})">
+                    ${job.customer}
+                </div>
+            </div>`;
+    });
+
+    // Today Line
+    if(todayOffset >= 0 && todayOffset <= (totalDays * dayWidth)) {
+        headerHtml += `<div class="gantt-today-line" style="left: ${todayOffset + (dayWidth/2)}px;"></div>`;
+    }
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
 }
 
 window.printJobOrder = async (id) => {
