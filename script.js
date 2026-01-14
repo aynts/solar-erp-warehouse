@@ -905,7 +905,7 @@ function printSingleQRCode() {
     printWindow.document.write('</style>');
     printWindow.document.write('</head><body>');
     printWindow.document.write('<div class="label">');
-    printWindow.document.write(qrContent); 
+    // Removed duplicate qrContent write
     printWindow.document.write(`<img src="${qrSrc}" style="width:100px;height:100px;"/>`);
     printWindow.document.write(`<h2></h2>`);
     printWindow.document.write(`<p> - </p>`);
@@ -1968,12 +1968,12 @@ window.loadVouchers = async () => {
             <tr>
                 <td>${v.date}</td>
                 <td>${v.party}</td>
-                <td>${v.reqBy || '-'}</td>
+                <td>${v.reqBy || 'System'}</td>
                 <td>${v.items.length} Items</td>
                 <td><span class="badge ${v.status=='draft'?'bg-warning text-dark':'bg-success'}">${v.status}</span></td>
                 <td>
                     <button class="btn btn-sm btn-light border" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
-                    ${v.status === 'draft' ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Confirm</button>` : ''}
+                    ${(v.status === 'draft' || v.status === 'pending') ? `<button class="btn btn-sm btn-success ms-1" onclick="approveVoucher('${d.id}', '${v.type}')">Issue Stock</button>` : ''}
                 </td>
             </tr>`;
             reqBody.innerHTML += row;
@@ -2333,6 +2333,7 @@ window.loadJobOrders = async () => {
                     <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${d.id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
                     <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${d.id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
+                    ${job.status !== 'Completed' ? `<button class="btn btn-sm btn-success ms-1" onclick="updateJobStatus('${d.id}', 'Completed')" title="Signoff / Complete Project"><i class="fas fa-check"></i></button>` : ''}
                 </td>
             </tr>
         `;
@@ -2502,6 +2503,7 @@ window.openJobOrderModal = async (id = null) => {
         const job = docSnap.data();
         document.getElementById('jobCustomer').value = job.customer;
         document.getElementById('jobDate').value = job.date;
+        document.getElementById('jobStatus').value = job.status || 'New';
         document.getElementById('jobEndDate').value = job.endDate || '';
         
         // Handle Staff (Array or String)
@@ -2519,6 +2521,7 @@ window.openJobOrderModal = async (id = null) => {
     } else {
         document.getElementById('jobCustomer').value = '';
         document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('jobStatus').value = 'New';
         document.getElementById('jobEndDate').value = '';
         document.getElementById('jobPhone').value = '';
         document.getElementById('jobAddress').value = '';
@@ -2564,6 +2567,7 @@ window.saveJobOrder = async () => {
     const data = {
         customer: customer,
         date: document.getElementById('jobDate').value,
+        status: document.getElementById('jobStatus').value,
         endDate: document.getElementById('jobEndDate').value,
         assignedStaff: selectedStaff,
         phone: document.getElementById('jobPhone').value,
@@ -2582,12 +2586,18 @@ window.saveJobOrder = async () => {
     if(id) {
         await updateDoc(doc(db, "job_orders", id), data);
     } else {
-        await addDoc(collection(db, "job_orders"), { ...data, status: 'New', createdAt: serverTimestamp() });
+        await addDoc(collection(db, "job_orders"), { ...data, createdAt: serverTimestamp() });
     }
     
     bootstrap.Modal.getInstance(document.getElementById('jobOrderModal')).hide();
     loadJobOrders();
     renderCalendar(); // Refresh calendar
+}
+
+window.updateJobStatus = async (id, status) => {
+    if(!confirm(`Mark this project as ${status}?`)) return;
+    await updateDoc(doc(db, "job_orders", id), { status: status });
+    loadJobOrders();
 }
 
 window.openBOMModal = async (jobId) => {
@@ -2706,14 +2716,37 @@ window.createMRF = async (jobId) => {
     if(!job.bom || job.bom.length === 0) return alert("Please create a BOM first.");
     if(!confirm(`Generate Material Requisition Form (Request Voucher) for ${job.customer}?`)) return;
 
-    openVoucherModal('request');
-    document.getElementById('voucherParty').value = job.customer;
-    document.getElementById('voucherLetterRef').value = "MRF-JOB-" + jobId.slice(0,6).toUpperCase();
-    document.getElementById('voucherItemsBody').innerHTML = '';
-    
-    job.bom.forEach(item => {
-        addVoucherItemRow({ itemCode: item.itemCode, qty: item.qty });
-    });
+    toggleLoading(true);
+    try {
+        const items = job.bom.map(i => {
+            const invItem = inventory.find(inv => inv.itemCode === i.itemCode);
+            return {
+                itemId: invItem ? invItem.id : null,
+                itemCode: i.itemCode,
+                itemName: invItem ? `${invItem.brand} ${invItem.model}` : i.itemCode,
+                qty: i.qty,
+                estPrice: 0,
+                serials: ''
+            };
+        });
+
+        await addDoc(collection(db, "vouchers"), {
+            type: 'request',
+            party: job.customer,
+            ref: "MRF-" + jobId.slice(0,6).toUpperCase(),
+            date: new Date().toISOString().split('T')[0],
+            status: 'pending', // Send directly to Warehouse as Pending
+            items: items,
+            reqBy: currentUser.email,
+            createdAt: serverTimestamp()
+        });
+        
+        alert("MRF Sent to Warehouse Operations (Pending Issue).");
+    } catch(e) {
+        console.error(e);
+        alert("Error creating MRF: " + e.message);
+    }
+    toggleLoading(false);
     
     await updateDoc(doc(db, "job_orders", jobId), { status: 'MRF Issued' });
     loadJobOrders(); // Refresh status
@@ -3051,7 +3084,7 @@ async function printQRLabels() {
                     const canvas = div.querySelector('canvas');
                     resolve(canvas ? canvas.toDataURL() : '');
                 }
-            }, 50); 
+            }, 150); // Increased timeout for stability
         });
     };
 
