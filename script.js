@@ -138,7 +138,9 @@ async function initApp() {
             window.exportInventoryPDF = exportInventoryPDF;
             window.openMovementReportModal = openMovementReportModal;
             window.generateStockMovementReport = generateStockMovementReport;
+            window.openJobCostReport = openJobCostReport;
             window.printVoucherLabels = printVoucherLabels;
+            window.autoFillJobDetails = autoFillJobDetails;
             
 
             // --- QR INTEGRATION ---
@@ -2159,7 +2161,11 @@ window.printVoucher = async (id) => {
     
     let title = "VOUCHER";
     if (v.type === 'receipt') title = "GOODS RECEIPT NOTE (GRN)";
-    else if (v.type === 'request') title = "STOCK ISSUE NOTE";
+    else if (v.type === 'request') {
+        // Detect MRF or Standard DO
+        if (v.ref && v.ref.includes('MRF')) title = "MATERIAL REQUISITION FORM (MRF)";
+        else title = "DELIVERY ORDER (DO)";
+    }
     else if (v.type === 'return') title = "MATERIAL RETURN NOTE";
     else if (v.type === 'damage_return') title = "DAMAGE RETURN NOTE";
     else if (v.type === 'purchase_order') title = "PURCHASE ORDER";
@@ -2170,6 +2176,10 @@ window.printVoucher = async (id) => {
     document.getElementById('printDate').innerText = v.date;
     document.getElementById('printRef').innerText = "Ref: " + (v.ref || '-');
     document.getElementById('printId').innerText = id.slice(0, 8).toUpperCase();
+    
+    // Hide Description Box for standard vouchers (unless we add remarks later)
+    const descEl = document.getElementById('printDesc');
+    if(descEl) descEl.classList.add('hidden');
     
     // Generate QR Code
     const qrContainer = document.getElementById('printQRCode');
@@ -2261,12 +2271,14 @@ window.loadJobOrders = async () => {
         if(!docHtml) docHtml = '<span class="text-muted small">-</span>';
 
         const statusBadge = job.status === 'Completed' ? 'bg-success' : (job.status === 'MRF Issued' ? 'bg-warning text-dark' : 'bg-secondary');
+        const staffDisplay = job.assignedStaff ? `<div class="small text-info"><i class="fas fa-user-hard-hat me-1"></i>${job.assignedStaff}</div>` : '';
 
         tbody.innerHTML += `
             <tr>
                 <td class="fw-bold text-primary">${d.id.slice(0,6).toUpperCase()}</td>
                 <td>
                     <div class="fw-bold">${job.customer}</div>
+                    ${staffDisplay}
                     <div class="small text-muted text-truncate" style="max-width: 200px;">${job.desc || ''}</div>
                 </td>
                 <td>${job.date}</td>
@@ -2275,6 +2287,7 @@ window.loadJobOrders = async () => {
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-dark" onclick="openJobOrderModal('${d.id}')" title="Edit Job"><i class="fas fa-edit"></i></button>
                     <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${d.id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
+                    <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${d.id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
                 </td>
             </tr>
@@ -2282,15 +2295,94 @@ window.loadJobOrders = async () => {
     });
 }
 
+window.printJobOrder = async (id) => {
+    toggleLoading(true);
+    try {
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        if(!docSnap.exists()) { toggleLoading(false); return; }
+        const job = docSnap.data();
+
+        document.getElementById('printTitle').innerText = "JOB ORDER";
+        document.getElementById('printSubtitle').innerText = "Project / Service Order";
+        
+        let partyInfo = `<strong>${job.customer}</strong>`;
+        if(job.address) partyInfo += `<br><span class="small text-muted fw-normal">${job.address}</span>`;
+        if(job.phone) partyInfo += `<br><span class="small text-muted fw-normal">Tel: ${job.phone}</span>`;
+        document.getElementById('printParty').innerHTML = partyInfo;
+        
+        document.getElementById('printDate').innerText = job.date;
+        document.getElementById('printRef').innerText = "Ref: " + id.slice(0, 8).toUpperCase();
+        document.getElementById('printId').innerText = id.slice(0, 8).toUpperCase();
+        
+        // Show Description
+        const descEl = document.getElementById('printDesc');
+        if(descEl) {
+            descEl.classList.remove('hidden');
+            let descHtml = `<strong>Scope / Description:</strong><br>${job.desc || 'No description provided.'}`;
+            if(job.assignedStaff) {
+                descHtml += `<div class="mt-2 pt-2 border-top"><strong>Assigned Staff:</strong> ${job.assignedStaff}</div>`;
+            }
+            descEl.innerHTML = descHtml;
+        }
+
+        // Generate QR
+        const qrContainer = document.getElementById('printQRCode');
+        qrContainer.innerHTML = '';
+        const tempDiv = document.createElement('div');
+        new QRCode(tempDiv, { text: window.location.origin + window.location.pathname + '?job=' + id, width: 80, height: 80 });
+        setTimeout(() => {
+            const img = tempDiv.querySelector('img');
+            if(img) qrContainer.appendChild(img);
+        }, 50);
+
+        // Signatures
+        document.getElementById('label1').innerText = "Prepared By";
+        document.getElementById('printReqBy').innerText = job.updatedBy || 'Admin';
+        document.getElementById('label2').innerText = "Approved By";
+        document.getElementById('printAppBy').innerText = "________________";
+        document.getElementById('label3').innerText = "Customer Accepted";
+        document.getElementById('printRecBy').innerText = "________________";
+
+        // Table (BOM)
+        const tbody = document.getElementById('printTableBody');
+        tbody.innerHTML = '';
+        let count = 1;
+        
+        if(job.bom && job.bom.length > 0) {
+            job.bom.forEach(i => {
+                const invItem = inventory.find(inv => inv.itemCode === i.itemCode);
+                const desc = invItem ? (invItem.brand + " " + invItem.model) : i.itemCode;
+                const unit = invItem ? (invItem.unit || 'Pcs') : 'Pcs';
+                tbody.innerHTML += `<tr><td>${count++}</td><td>${i.itemCode}</td><td>${desc}</td><td class="text-center">${i.qty}</td><td class="text-center">${unit}</td></tr>`;
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No BOM Items Defined</td></tr>';
+        }
+
+        new bootstrap.Modal(document.getElementById('printModal')).show();
+    } catch(e) { console.error(e); alert("Error printing job order"); }
+    toggleLoading(false);
+}
+
 window.openJobOrderModal = async (id = null) => {
     const modal = new bootstrap.Modal(document.getElementById('jobOrderModal'));
     document.getElementById('jobId').value = id || '';
+
+    // Populate Staff Dropdown
+    const staffSelect = document.getElementById('jobAssignedStaff');
+    staffSelect.innerHTML = '<option value="">Select Staff...</option>';
+    systemUsers.forEach(u => {
+        staffSelect.innerHTML += `<option value="${u}">${u}</option>`;
+    });
     
     if(id) {
         const docSnap = await getDoc(doc(db, "job_orders", id));
         const job = docSnap.data();
         document.getElementById('jobCustomer').value = job.customer;
         document.getElementById('jobDate').value = job.date;
+        document.getElementById('jobAssignedStaff').value = job.assignedStaff || '';
+        document.getElementById('jobPhone').value = job.phone || '';
+        document.getElementById('jobAddress').value = job.address || '';
         document.getElementById('jobDesc').value = job.desc || '';
         document.getElementById('docQuote').checked = job.docs?.quote || false;
         document.getElementById('docPO').checked = job.docs?.po || false;
@@ -2300,11 +2392,23 @@ window.openJobOrderModal = async (id = null) => {
     } else {
         document.getElementById('jobCustomer').value = '';
         document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('jobAssignedStaff').value = '';
+        document.getElementById('jobPhone').value = '';
+        document.getElementById('jobAddress').value = '';
         document.getElementById('jobDesc').value = '';
         document.querySelectorAll('#jobOrderModal input[type="checkbox"]').forEach(c => c.checked = false);
         document.getElementById('jobModalTitle').innerText = "New Job Order";
     }
     modal.show();
+}
+
+window.autoFillJobDetails = () => {
+    const name = document.getElementById('jobCustomer').value;
+    const party = parties.find(p => p.name === name);
+    if(party) {
+        if(!document.getElementById('jobPhone').value) document.getElementById('jobPhone').value = party.contact || '';
+        if(!document.getElementById('jobAddress').value) document.getElementById('jobAddress').value = party.address || '';
+    }
 }
 
 window.saveJobOrder = async () => {
@@ -2315,6 +2419,9 @@ window.saveJobOrder = async () => {
     const data = {
         customer: customer,
         date: document.getElementById('jobDate').value,
+        assignedStaff: document.getElementById('jobAssignedStaff').value,
+        phone: document.getElementById('jobPhone').value,
+        address: document.getElementById('jobAddress').value,
         desc: document.getElementById('jobDesc').value,
         docs: {
             quote: document.getElementById('docQuote').checked,
@@ -2463,6 +2570,64 @@ window.createMRF = async (jobId) => {
     
     await updateDoc(doc(db, "job_orders", jobId), { status: 'MRF Issued' });
     loadJobOrders(); // Refresh status
+}
+
+window.openJobCostReport = async () => {
+    toggleLoading(true);
+    try {
+        // 1. Fetch Data
+        const jobsSnap = await getDocs(query(collection(db, "job_orders"), orderBy("date", "desc")));
+        const transSnap = await getDocs(collection(db, "transactions"));
+        
+        // 2. Process Transactions into Map: Party -> Cost
+        const actualCosts = {};
+        transSnap.forEach(d => {
+            const t = d.data();
+            if(!t.party || !t.itemId) return;
+            
+            if(!actualCosts[t.party]) actualCosts[t.party] = 0;
+            
+            const item = inventory.find(i => i.id === t.itemId);
+            const cost = item ? (item.costPrice || 0) : 0;
+            
+            // Actual Usage Cost = (Sent - Good Returns) * Cost
+            // Damaged returns are NOT subtracted because the project consumed/destroyed them (Cost incurred)
+            if(t.type === 'out') {
+                actualCosts[t.party] += (t.qty * cost);
+            } else if (t.type === 'in' && t.subType === 'return') {
+                actualCosts[t.party] -= (t.qty * cost);
+            }
+        });
+
+        // 3. Process Jobs
+        const tbody = document.getElementById('jobCostReportBody');
+        tbody.innerHTML = '';
+        
+        jobsSnap.forEach(d => {
+            const job = d.data();
+            if (job.status !== 'Completed') return; // Only Closed/Completed Jobs
+
+            // Calculate BOM Cost
+            let bomCost = 0;
+            if(job.bom) {
+                job.bom.forEach(b => {
+                    const item = inventory.find(i => i.itemCode === b.itemCode);
+                    const cost = item ? (item.costPrice || 0) : 0;
+                    bomCost += (b.qty * cost);
+                });
+            }
+
+            const actualCost = actualCosts[job.customer] || 0;
+            const variance = actualCost - bomCost;
+            const pct = bomCost > 0 ? ((variance / bomCost) * 100).toFixed(1) : 0;
+            const varianceClass = variance > 0 ? 'text-danger' : 'text-success';
+            
+            tbody.innerHTML += `<tr><td>${d.id.slice(0,8).toUpperCase()}</td><td>${job.customer}</td><td class="text-end">${Math.round(bomCost).toLocaleString()}</td><td class="text-end">${Math.round(actualCost).toLocaleString()}</td><td class="text-end fw-bold ${varianceClass}">${Math.round(variance).toLocaleString()}</td><td class="text-center ${varianceClass}">${pct}%</td></tr>`;
+        });
+        
+        new bootstrap.Modal(document.getElementById('jobCostReportModal')).show();
+    } catch(e) { console.error(e); alert("Error generating report"); }
+    toggleLoading(false);
 }
 
 // NEW: Print Project Usage Voucher for Finance
