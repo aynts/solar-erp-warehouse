@@ -146,6 +146,9 @@ async function initApp() {
             window.autoFillJobDetails = autoFillJobDetails;
             window.toggleJobView = toggleJobView;
             window.printProjectSignOff = printProjectSignOff;
+            window.printProjectCompletionReport = printProjectCompletionReport;
+            window.openJobFromUsage = openJobFromUsage;
+            window.loadProjectDashboard = loadProjectDashboard;
             
 
             // --- QR INTEGRATION ---
@@ -305,7 +308,7 @@ function setupUIForUser(email, role) {
 
 // --- VIEW LOGIC ---
 window.showView = (viewId) => {
-    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView', 'jobOrderView'].forEach(id => {
+    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView', 'jobOrderView', 'projectDashboardView'].forEach(id => {
         const el = document.getElementById(id);
         if(el) el.classList.add('hidden');
     });
@@ -325,6 +328,7 @@ window.showView = (viewId) => {
     if(viewId === 'suppliersView') document.getElementById('nav-suppliers').classList.add('active');
     if(viewId === 'customersView') document.getElementById('nav-customers').classList.add('active');
     if(viewId === 'jobOrderView') document.getElementById('nav-jobs').classList.add('active');
+    if(viewId === 'projectDashboardView') document.getElementById('nav-proj-dash').classList.add('active');
 
     if (viewId === 'dashboardView') loadDashboard();
     if (viewId === 'financeView') loadFinanceView();
@@ -337,6 +341,7 @@ window.showView = (viewId) => {
     if (viewId === 'suppliersView') loadPartiesView('supplier');
     if (viewId === 'customersView') loadPartiesView('project');
     if (viewId === 'jobOrderView') loadJobOrders();
+    if (viewId === 'projectDashboardView') loadProjectDashboard();
 }
 
 // --- FINANCE LOGIC (New) ---
@@ -2326,30 +2331,60 @@ window.toggleJobView = (view) => {
     }
 }
 
-window.loadJobOrders = async () => {
+window.loadJobOrders = async (filterProject = null) => {
     const tbody = document.getElementById('jobOrderTableBody');
     tbody.innerHTML = '';
     
-    const q = query(collection(db, "job_orders"), orderBy("date", "desc"));
+    let q;
+    if (filterProject) {
+        q = query(collection(db, "job_orders"), where("customer", "==", filterProject));
+    } else {
+        q = query(collection(db, "job_orders"), orderBy("date", "desc"));
+    }
+
     const snap = await getDocs(q);
+    let jobs = [];
+    snap.forEach(d => jobs.push({id: d.id, ...d.data()}));
     
-    snap.forEach(d => {
-        const job = d.data();
+    // Client-side sort to ensure order (handles filtered results without composite index)
+    jobs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // Update Header
+    const titleEl = document.querySelector('#jobOrderView h3');
+    if(titleEl) {
+        if(filterProject) {
+            titleEl.innerHTML = `Job Orders: <span class="text-primary">${filterProject}</span> <button class="btn btn-sm btn-outline-dark ms-3" style="font-size: 0.8rem;" onclick="loadJobOrders()">Show All</button>`;
+        } else {
+            titleEl.innerHTML = `Job Order Management`;
+        }
+    }
+    
+    jobs.forEach(job => {
+        const id = job.id;
 
         const staffList = Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : (job.assignedStaff || '');
         const staffDisplay = staffList ? `<div class="small text-info"><i class="fas fa-user-hard-hat me-1"></i>${staffList}</div>` : '';
 
+        // MRF Column Logic
+        let mrfBtn = '';
+        if (job.status === 'Completed' || job.status === 'Cancelled') {
+            mrfBtn = '<span class="text-muted small">-</span>';
+        } else {
+            mrfBtn = `<button class="btn btn-sm btn-warning text-dark shadow-sm" onclick="createMRF('${id}')" title="Generate Material Requisition"><i class="fas fa-file-export me-1"></i>Generate</button>`;
+        }
+
         tbody.innerHTML += `
             <tr>
-                <td class="fw-bold text-primary">${d.id.slice(0,6).toUpperCase()}</td>
+                <td class="fw-bold text-primary">${id.slice(0,6).toUpperCase()}</td>
                 <td>
                     <div class="fw-bold">${job.customer}</div>
                     ${staffDisplay}
                     <div class="small text-muted text-truncate" style="max-width: 200px;">${job.desc || ''}</div>
                 </td>
                 <td>${job.date}</td>
+                <td>${mrfBtn}</td>
                 <td>
-                    <select onchange="updateJobStatus('${d.id}', this.value)" class="form-select form-select-sm" style="width:auto; min-width:130px; font-size:0.85rem;">
+                    <select onchange="updateJobStatus('${id}', this.value)" class="form-select form-select-sm" style="width:auto; min-width:130px; font-size:0.85rem;">
                         <option value="New" ${job.status==='New'?'selected':''}>New</option>
                         <option value="MRF Issued" ${job.status==='MRF Issued'?'selected':''}>MRF Issued</option>
                         <option value="Work in Progress" ${job.status==='Work in Progress'?'selected':''}>Work in Progress</option>
@@ -2359,13 +2394,13 @@ window.loadJobOrders = async () => {
                     </select>
                 </td>
                 <td class="text-end">
-                    <button class="btn btn-sm btn-outline-dark" onclick="openJobOrderModal('${d.id}')" title="Edit Job"><i class="fas fa-edit"></i></button>
-                    <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${d.id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
-                    <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${d.id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
-                    <button class="btn btn-sm btn-warning text-dark" onclick="createMRF('${d.id}')" title="Create Material Requisition Form"><i class="fas fa-file-export"></i> MRF</button>
-                    ${job.status !== 'Completed' ? `<button class="btn btn-sm btn-success ms-1" onclick="updateJobStatus('${d.id}', 'Completed')" title="Signoff / Complete Project"><i class="fas fa-check"></i></button>` : ''}
-                    ${(job.status === 'Work in Progress' || job.status === 'MRF Issued') ? `<button class="btn btn-sm btn-info text-white ms-1" onclick="updateJobStatus('${d.id}', 'Partially Completed')" title="Mark Partial Completion"><i class="fas fa-hourglass-half"></i></button>` : ''}
-                    ${job.status === 'Completed' ? `<button class="btn btn-sm btn-outline-dark ms-1" onclick="printProjectSignOff('${d.id}')" title="Print Sign-off Document"><i class="fas fa-file-signature"></i></button>` : ''}
+                    <button class="btn btn-sm btn-outline-dark" onclick="openJobOrderModal('${id}')" title="Edit Job"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm btn-outline-primary" onclick="openBOMModal('${id}')" title="Manage BOM"><i class="fas fa-list-alt"></i> BOM</button>
+                    <button class="btn btn-sm btn-secondary" onclick="printJobOrder('${id}')" title="Print Job Order"><i class="fas fa-print"></i></button>
+                    ${job.status !== 'Completed' ? `<button class="btn btn-sm btn-success ms-1" onclick="updateJobStatus('${id}', 'Completed')" title="Signoff / Complete Project"><i class="fas fa-check"></i></button>` : ''}
+                    ${(job.status === 'Work in Progress' || job.status === 'MRF Issued') ? `<button class="btn btn-sm btn-info text-white ms-1" onclick="updateJobStatus('${id}', 'Partially Completed')" title="Mark Partial Completion"><i class="fas fa-hourglass-half"></i></button>` : ''}
+                    ${job.status === 'Completed' ? `<button class="btn btn-sm btn-outline-dark ms-1" onclick="printProjectSignOff('${id}')" title="Print Sign-off Document"><i class="fas fa-file-signature"></i></button>` : ''}
+                    ${job.status === 'Completed' ? `<button class="btn btn-sm btn-dark ms-1" onclick="printProjectCompletionReport('${id}')" title="Full Project Report"><i class="fas fa-book"></i></button>` : ''}
                 </td>
             </tr>
         `;
@@ -2523,7 +2558,7 @@ window.printJobOrder = async (id) => {
     toggleLoading(false);
 }
 
-window.openJobOrderModal = async (id = null) => {
+window.openJobOrderModal = async (id = null, prefillCustomer = null) => {
     const modal = new bootstrap.Modal(document.getElementById('jobOrderModal'));
     document.getElementById('jobId').value = id || '';
 
@@ -2547,7 +2582,7 @@ window.openJobOrderModal = async (id = null) => {
         document.getElementById('jobDesc').value = job.desc || '';
         document.getElementById('jobModalTitle').innerText = "Edit Job Order";
     } else {
-        document.getElementById('jobCustomer').value = '';
+        document.getElementById('jobCustomer').value = prefillCustomer || '';
         document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
         document.getElementById('jobStatus').value = 'New';
         document.getElementById('jobEndDate').value = '';
@@ -2555,6 +2590,10 @@ window.openJobOrderModal = async (id = null) => {
         document.getElementById('jobAddress').value = '';
         document.getElementById('jobDesc').value = '';
         document.getElementById('jobModalTitle').innerText = "New Job Order";
+        
+        if(prefillCustomer) {
+            autoFillJobDetails();
+        }
     }
 
     // Render Checkboxes
@@ -2934,6 +2973,103 @@ window.printProjectSignOff = async (id) => {
         printWindow.document.close();
         setTimeout(() => { printWindow.print(); }, 1000);
     } catch(e) { console.error(e); alert("Error generating sign-off document"); }
+    toggleLoading(false);
+}
+
+window.printProjectCompletionReport = async (id) => {
+    toggleLoading(true);
+    try {
+        const docSnap = await getDoc(doc(db, "job_orders", id));
+        if(!docSnap.exists()) { toggleLoading(false); return; }
+        const job = docSnap.data();
+
+        // Fetch Vouchers
+        const qV = query(collection(db, "vouchers"), where("party", "==", job.customer));
+        const vSnap = await getDocs(qV);
+        let vouchersHtml = '';
+        vSnap.forEach(d => {
+            const v = d.data();
+            vouchersHtml += `<tr><td>${v.date}</td><td>${v.type.toUpperCase()}</td><td>${v.ref || '-'}</td><td>${v.status}</td><td>${v.items.length} Items</td></tr>`;
+        });
+
+        // Fetch Transactions (Usage)
+        const qT = query(collection(db, "transactions"), where("party", "==", job.customer));
+        const tSnap = await getDocs(qT);
+        const usageMap = {};
+        tSnap.forEach(d => {
+            const t = d.data();
+            if(!t.itemId) return;
+            if(!usageMap[t.itemId]) usageMap[t.itemId] = { name: t.itemName, sent: 0, ret: 0 };
+            if(t.type === 'out') usageMap[t.itemId].sent += t.qty;
+            if(t.type === 'in') usageMap[t.itemId].ret += t.qty;
+        });
+
+        let usageHtml = '';
+        for(const [itemId, data] of Object.entries(usageMap)) {
+            const net = data.sent - data.ret;
+            if(net !== 0 || data.sent > 0) {
+                usageHtml += `<tr><td>${data.name}</td><td class="text-center">${data.sent}</td><td class="text-center">${data.ret}</td><td class="text-center fw-bold">${net}</td></tr>`;
+            }
+        }
+
+        const printWindow = window.open('', '', 'height=900,width=1000');
+        printWindow.document.write('<html><head><title>Project Completion Report</title>');
+        printWindow.document.write('<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">');
+        printWindow.document.write('<style>body{padding:30px; font-family: sans-serif;} .section-title{background:#f8f9fa; padding:8px; border-left:4px solid #0d6efd; margin-top:20px; font-weight:bold;}</style>');
+        printWindow.document.write('</head><body>');
+        
+        printWindow.document.write(`
+            <div class="container">
+                <div class="text-center mb-4 border-bottom pb-3">
+                    <h2 class="fw-bold">PROJECT COMPLETION REPORT</h2>
+                    <h5 class="text-muted">Mother Home Solar Co., Ltd.</h5>
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-6">
+                        <strong>Project:</strong> ${job.customer}<br>
+                        <strong>Address:</strong> ${job.address || '-'}<br>
+                        <strong>Staff:</strong> ${Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : job.assignedStaff}
+                    </div>
+                    <div class="col-6 text-end">
+                        <strong>Job Ref:</strong> ${id.slice(0,8).toUpperCase()}<br>
+                        <strong>Start Date:</strong> ${job.date}<br>
+                        <strong>Completion:</strong> ${job.endDate || new Date().toLocaleDateString()}<br>
+                        <span class="badge bg-success fs-6">COMPLETED</span>
+                    </div>
+                </div>
+
+                <div class="section-title">1. Scope of Work</div>
+                <p class="p-2">${job.desc || 'No description.'}</p>
+
+                <div class="section-title">2. Material Usage Summary (Net Consumed)</div>
+                <table class="table table-sm table-bordered table-striped">
+                    <thead class="table-light"><tr><th>Item</th><th class="text-center">Sent</th><th class="text-center">Returned</th><th class="text-center">Net Used</th></tr></thead>
+                    <tbody>${usageHtml || '<tr><td colspan="4" class="text-center text-muted">No material usage recorded.</td></tr>'}</tbody>
+                </table>
+
+                <div class="section-title">3. Related Vouchers</div>
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light"><tr><th>Date</th><th>Type</th><th>Ref</th><th>Status</th><th>Details</th></tr></thead>
+                    <tbody>${vouchersHtml || '<tr><td colspan="5" class="text-center text-muted">No vouchers found.</td></tr>'}</tbody>
+                </table>
+
+                <div class="row mt-5">
+                    <div class="col-12 text-center">
+                        <p class="text-muted small">This report is automatically generated by Solar ERP System.</p>
+                    </div>
+                </div>
+            </div>
+        `);
+        
+        printWindow.document.write('</body></html>');
+        printWindow.document.close();
+        setTimeout(() => { printWindow.print(); }, 1000);
+
+    } catch(e) {
+        console.error(e);
+        alert("Error generating report: " + e.message);
+    }
     toggleLoading(false);
 }
 
@@ -3539,6 +3675,7 @@ async function loadProjectUsage() {
         const actionBtn = d.status === 'completed'
             ? `
                 <button class="btn btn-sm btn-outline-secondary" onclick="toggleProjectStatus('${proj}', 'active')">Re-open</button>
+                <button class="btn btn-sm btn-outline-dark ms-1" onclick="openJobFromUsage('${proj}')" title="View Job Order"><i class="fas fa-hard-hat"></i></button>
                 <button class="btn btn-sm btn-outline-primary ms-1" onclick="printProjectVoucher('${proj}')" title="Print Usage Voucher"><i class="fas fa-file-invoice"></i></button>
               `
             : `<button class="btn btn-sm btn-outline-success" onclick="toggleProjectStatus('${proj}', 'completed')">Mark Complete</button>`;
@@ -3546,6 +3683,7 @@ async function loadProjectUsage() {
         tbody.innerHTML += `
             <tr>
                 <td class="fw-bold">${proj}</td>
+                <td><button class="btn btn-sm btn-link text-decoration-none p-0" onclick="openJobFromUsage('${proj}')"><i class="fas fa-external-link-alt small me-1"></i>View Job</button></td>
                 <td>${statusBadge}</td>
                 <td>${d.sent}</td>
                 <td>${d.returned}</td>
@@ -3555,6 +3693,21 @@ async function loadProjectUsage() {
             </tr>
         `;
     }
+}
+
+window.openJobFromUsage = (customerName) => {
+    // Switch to Job Order View manually to avoid default load
+    ['inventoryView', 'financeView', 'flowView', 'usersView', 'procurementView', 'warehouseView', 'dashboardView', 'projectUsageView', 'suppliersView', 'customersView', 'jobOrderView', 'projectDashboardView'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.classList.add('hidden');
+    });
+    document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'));
+    
+    document.getElementById('jobOrderView').classList.remove('hidden');
+    document.getElementById('nav-jobs').classList.add('active');
+
+    // Load with Filter
+    loadJobOrders(customerName);
 }
 
 window.toggleProjectStatus = async (projectName, newStatus) => {
@@ -3972,3 +4125,64 @@ function toggleLoading(show) {
 }
 
 initApp();
+
+// --- PROJECT DASHBOARD LOGIC ---
+window.loadProjectDashboard = async () => {
+    const tbody = document.getElementById('projectDashboardBody');
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Loading...</td></tr>';
+
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    
+    const projects = {};
+    
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0 };
+        
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+    });
+    
+    tbody.innerHTML = '';
+    
+    // Sort by active count desc
+    const sortedKeys = Object.keys(projects).sort((a,b) => projects[b].active - projects[a].active);
+    
+    sortedKeys.forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        let progressColor = 'bg-primary';
+        if(pct >= 100) progressColor = 'bg-success';
+        else if(pct >= 50) progressColor = 'bg-info';
+        else if(pct < 20) progressColor = 'bg-warning';
+
+        tbody.innerHTML += `
+            <tr>
+                <td class="fw-bold">${name}</td>
+                <td class="text-center"><span class="badge bg-primary bg-opacity-10 text-primary">${p.active}</span></td>
+                <td class="text-center"><span class="badge bg-success bg-opacity-10 text-success">${p.completed}</span></td>
+                <td class="text-center fw-bold">${p.total}</td>
+                <td>
+                    <div class="d-flex align-items-center">
+                        <div class="progress flex-grow-1" style="height: 8px;">
+                            <div class="progress-bar ${progressColor}" role="progressbar" style="width: ${pct}%"></div>
+                        </div>
+                        <span class="ms-2 small fw-bold text-muted">${pct}%</span>
+                    </div>
+                </td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" onclick="openJobOrderModal(null, '${name}')" title="Quick Add Job"><i class="fas fa-plus"></i> Job</button>
+                    <button class="btn btn-sm btn-outline-dark ms-1" onclick="openJobFromUsage('${name}')" title="View Details"><i class="fas fa-list"></i></button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    if(sortedKeys.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No active projects found.</td></tr>';
+    }
+}
