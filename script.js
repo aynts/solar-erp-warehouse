@@ -20,6 +20,7 @@ let parties = [];
 let systemUsers = [];
 let currentCategoryFilter = 'All';
 let isInventoryLoaded = false; // CACHE FLAG
+let currentCalendarDate = new Date(); // For Calendar
 
 // --- DYNAMIC FIELD CONFIGURATION ---
 const categoryFieldConfig = {
@@ -131,6 +132,7 @@ async function initApp() {
             window.loadInventory = loadInventory;
             window.loadFlow = loadFlow;
             window.loadDashboard = loadDashboard;
+            window.changeCalendarMonth = changeCalendarMonth;
             window.loadProjectUsage = loadProjectUsage;
             window.generateNextCode = generateNextCode; 
             window.fetchSystemUsers = fetchSystemUsers;
@@ -705,6 +707,9 @@ async function loadDashboard() {
 
     document.getElementById('dashPendingIn').innerText = pendingIn;
     document.getElementById('dashPendingOut').innerText = pendingOut;
+
+    loadOperationsDashboard();
+    renderCalendar();
 }
 
 // --- INVENTORY LOGIC (OPTIMIZED) ---
@@ -1494,8 +1499,8 @@ window.addVoucherItemRow = (prefillData = null) => {
     
     const row = `
         <tr>
-            <td><input type="text" class="form-control form-control-sm item-search bg-white" list="" placeholder="Search Item Code" value=""></td>
-            <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="" oninput="this.value = Math.abs(this.value)"></td>
+            <td><input type="text" class="form-control form-control-sm item-search bg-white" list="${listId}" placeholder="Search Item Code" value="${itemVal}"></td>
+            <td><input type="number" min="1" class="form-control form-control-sm qty-input bg-white" value="${qtyVal}" oninput="this.value = Math.abs(this.value)"></td>
             <td><input type="number" class="form-control form-control-sm price-input bg-white" placeholder="Est. Price" value="${priceVal}"></td>
             <td><input type="text" class="form-control form-control-sm serial-input bg-white" placeholder="S/N (Optional)" value="${serialVal}"></td>
             <td><button class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
@@ -2272,7 +2277,8 @@ window.loadJobOrders = async () => {
         if(!docHtml) docHtml = '<span class="text-muted small">-</span>';
 
         const statusBadge = job.status === 'Completed' ? 'bg-success' : (job.status === 'MRF Issued' ? 'bg-warning text-dark' : 'bg-secondary');
-        const staffDisplay = job.assignedStaff ? `<div class="small text-info"><i class="fas fa-user-hard-hat me-1"></i>${job.assignedStaff}</div>` : '';
+        const staffList = Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : (job.assignedStaff || '');
+        const staffDisplay = staffList ? `<div class="small text-info"><i class="fas fa-user-hard-hat me-1"></i>${staffList}</div>` : '';
 
         tbody.innerHTML += `
             <tr>
@@ -2342,7 +2348,7 @@ window.printJobOrder = async (id) => {
         document.getElementById('label2').innerText = "Approved By";
         document.getElementById('printAppBy').innerText = "________________";
         document.getElementById('label3').innerText = "Staff Signature";
-        document.getElementById('printRecBy').innerText = job.assignedStaff || "________________";
+        document.getElementById('printRecBy').innerText = (Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : job.assignedStaff) || "________________";
 
         // Table (BOM)
         const tbody = document.getElementById('printTableBody');
@@ -2369,19 +2375,20 @@ window.openJobOrderModal = async (id = null) => {
     const modal = new bootstrap.Modal(document.getElementById('jobOrderModal'));
     document.getElementById('jobId').value = id || '';
 
-    // Populate Staff Dropdown
-    const staffSelect = document.getElementById('jobAssignedStaff');
-    staffSelect.innerHTML = '<option value="">Select Staff...</option>';
-    systemUsers.forEach(u => {
-        staffSelect.innerHTML += `<option value="${u}">${u}</option>`;
-    });
+    // Prepare Staff Checkboxes
+    let currentStaff = [];
     
     if(id) {
         const docSnap = await getDoc(doc(db, "job_orders", id));
         const job = docSnap.data();
         document.getElementById('jobCustomer').value = job.customer;
         document.getElementById('jobDate').value = job.date;
-        document.getElementById('jobAssignedStaff').value = job.assignedStaff || '';
+        document.getElementById('jobEndDate').value = job.endDate || '';
+        
+        // Handle Staff (Array or String)
+        if(Array.isArray(job.assignedStaff)) currentStaff = job.assignedStaff;
+        else if(job.assignedStaff) currentStaff = [job.assignedStaff];
+        
         document.getElementById('jobPhone').value = job.phone || '';
         document.getElementById('jobAddress').value = job.address || '';
         document.getElementById('jobDesc').value = job.desc || '';
@@ -2393,13 +2400,27 @@ window.openJobOrderModal = async (id = null) => {
     } else {
         document.getElementById('jobCustomer').value = '';
         document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
-        document.getElementById('jobAssignedStaff').value = '';
+        document.getElementById('jobEndDate').value = '';
         document.getElementById('jobPhone').value = '';
         document.getElementById('jobAddress').value = '';
         document.getElementById('jobDesc').value = '';
         document.querySelectorAll('#jobOrderModal input[type="checkbox"]').forEach(c => c.checked = false);
         document.getElementById('jobModalTitle').innerText = "New Job Order";
     }
+
+    // Render Checkboxes
+    const staffContainer = document.getElementById('jobStaffContainer');
+    staffContainer.innerHTML = '';
+    systemUsers.forEach(u => {
+        const isChecked = currentStaff.includes(u) ? 'checked' : '';
+        staffContainer.innerHTML += `
+            <div class="form-check">
+                <input class="form-check-input staff-checkbox" type="checkbox" value="${u}" id="staff_${u.replace(/\s/g, '')}" ${isChecked}>
+                <label class="form-check-label small" for="staff_${u.replace(/\s/g, '')}">${u}</label>
+            </div>
+        `;
+    });
+
     modal.show();
 }
 
@@ -2417,10 +2438,15 @@ window.saveJobOrder = async () => {
     const customer = document.getElementById('jobCustomer').value;
     if(!customer) return alert("Customer is required");
 
+    // Collect Staff
+    const selectedStaff = [];
+    document.querySelectorAll('.staff-checkbox:checked').forEach(cb => selectedStaff.push(cb.value));
+
     const data = {
         customer: customer,
         date: document.getElementById('jobDate').value,
-        assignedStaff: document.getElementById('jobAssignedStaff').value,
+        endDate: document.getElementById('jobEndDate').value,
+        assignedStaff: selectedStaff,
         phone: document.getElementById('jobPhone').value,
         address: document.getElementById('jobAddress').value,
         desc: document.getElementById('jobDesc').value,
@@ -2442,6 +2468,7 @@ window.saveJobOrder = async () => {
     
     bootstrap.Modal.getInstance(document.getElementById('jobOrderModal')).hide();
     loadJobOrders();
+    renderCalendar(); // Refresh calendar
 }
 
 window.openBOMModal = async (jobId) => {
@@ -2641,12 +2668,13 @@ window.openStaffReport = async () => {
         
         snap.forEach(d => {
             const job = d.data();
-            const staff = job.assignedStaff || 'Unassigned';
+            let staffArr = Array.isArray(job.assignedStaff) ? job.assignedStaff : (job.assignedStaff ? [job.assignedStaff] : ['Unassigned']);
             
-            if(!stats[staff]) stats[staff] = { total: 0, completed: 0 };
-            
-            stats[staff].total++;
-            if(job.status === 'Completed') stats[staff].completed++;
+            staffArr.forEach(staff => {
+                if(!stats[staff]) stats[staff] = { total: 0, completed: 0 };
+                stats[staff].total++;
+                if(job.status === 'Completed') stats[staff].completed++;
+            });
         });
         
         const tbody = document.getElementById('staffReportBody');
@@ -3516,6 +3544,132 @@ window.printVoucherLabels = async (id) => {
     } catch(e) { console.error(e); alert("Error: " + e.message); }
     toggleLoading(false);
 }
+
+// --- OPERATIONS DASHBOARD ---
+async function loadOperationsDashboard() {
+    const container = document.getElementById('opsDashboardBody');
+    if(!container) return;
+    
+    // Fetch active jobs (Client-side filter to avoid index issues)
+    const q = query(collection(db, "job_orders"), orderBy("date", "desc"), limit(50));
+    const snap = await getDocs(q);
+    
+    container.innerHTML = '';
+    let activeCount = 0;
+    
+    snap.forEach(d => {
+        const job = d.data();
+        if(job.status !== 'Completed' && job.status !== 'Cancelled') {
+            activeCount++;
+            let staff = Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : (job.assignedStaff || '');
+            if(!staff) staff = '<span class="text-muted fst-italic">Unassigned</span>';
+            const badgeClass = job.status === 'New' ? 'bg-primary' : (job.status === 'MRF Issued' ? 'bg-warning text-dark' : 'bg-info');
+            
+            container.innerHTML += `
+                <tr>
+                    <td>
+                        <div class="d-flex align-items-center">
+                            <div class="bg-light rounded-circle d-flex align-items-center justify-content-center me-2" style="width:32px;height:32px;">
+                                <i class="fas fa-user-hard-hat text-secondary small"></i>
+                            </div>
+                            <div class="fw-bold text-dark">${staff}</div>
+                        </div>
+                    </td>
+                    <td>
+                        <div class="fw-bold text-primary" style="font-size: 0.9rem;">${job.customer}</div>
+                        <div class="small text-muted text-truncate" style="max-width: 150px;">${job.address || 'No Address'}</div>
+                    </td>
+                    <td><span class="badge ${badgeClass}">${job.status}</span></td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-light border" onclick="openJobOrderModal('${d.id}')"><i class="fas fa-edit"></i></button>
+                    </td>
+                </tr>
+            `;
+        }
+    });
+    
+    const countEl = document.getElementById('opsActiveCount');
+    if(countEl) countEl.innerText = activeCount;
+}
+
+// --- CALENDAR LOGIC ---
+window.changeCalendarMonth = (delta) => {
+    currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
+    renderCalendar();
+}
+
+async function renderCalendar() {
+    const container = document.getElementById('calendarContainer');
+    const monthDisplay = document.getElementById('calendarMonthDisplay');
+    if(!container || !monthDisplay) return;
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    
+    monthDisplay.innerText = currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+    // Fetch Jobs for Calendar (Ideally filter by date range, but fetching all active for now)
+    const q = query(collection(db, "job_orders"), orderBy("date", "desc"), limit(100));
+    const snap = await getDocs(q);
+    const jobs = [];
+    snap.forEach(d => jobs.push({id: d.id, ...d.data()}));
+
+    // Calendar Grid Generation
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startingDay = firstDay.getDay(); // 0 = Sun
+
+    let html = `
+        <div class="calendar-header">Sun</div><div class="calendar-header">Mon</div><div class="calendar-header">Tue</div>
+        <div class="calendar-header">Wed</div><div class="calendar-header">Thu</div><div class="calendar-header">Fri</div><div class="calendar-header">Sat</div>
+    `;
+
+    // Empty cells for previous month
+    for (let i = 0; i < startingDay; i++) {
+        html += `<div class="calendar-day other-month"></div>`;
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const isToday = dateStr === todayStr ? 'today' : '';
+        
+        // Find jobs active on this day
+        let dayEvents = '';
+        jobs.forEach(job => {
+            if(job.status === 'Cancelled' || job.status === 'Completed') return;
+            
+            const start = job.date;
+            const end = job.endDate || job.date; // Default to single day if no end date
+            
+            if (dateStr >= start && dateStr <= end) {
+                const staff = Array.isArray(job.assignedStaff) ? (job.assignedStaff.length > 0 ? job.assignedStaff[0].split(' ')[0] + (job.assignedStaff.length>1 ? ' +' : '') : '?') : (job.assignedStaff ? job.assignedStaff.split(' ')[0] : '?');
+                dayEvents += `<div class="cal-event" onclick="openJobOrderModal('${job.id}')" title="${job.customer} (${staff})">${job.customer}</div>`;
+            }
+        });
+
+        html += `
+            <div class="calendar-day ${isToday}">
+                <div class="calendar-day-number">${day}</div>
+                ${dayEvents}
+            </div>
+        `;
+    }
+
+    // Fill remaining cells
+    const totalCells = startingDay + daysInMonth;
+    const remaining = 7 - (totalCells % 7);
+    if (remaining < 7) {
+        for (let i = 0; i < remaining; i++) {
+            html += `<div class="calendar-day other-month"></div>`;
+        }
+    }
+
+    container.innerHTML = html;
+}
+
 
 function toggleLoading(show) {
     document.getElementById('loadingOverlay').classList.toggle('hidden', !show);

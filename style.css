@@ -276,3 +276,37 @@ body {
     font-size: 36px; /* The logo will automatically grow to match this */
   }
 }
+
+/* CALENDAR STYLES */
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background-color: #e2e8f0;
+    border: 1px solid #e2e8f0;
+}
+.calendar-header {
+    background-color: #f8fafc;
+    padding: 10px;
+    text-align: center;
+    font-weight: bold;
+    font-size: 0.8rem;
+    color: #64748b;
+    text-transform: uppercase;
+}
+.calendar-day {
+    background-color: white;
+    min-height: 100px;
+    padding: 6px;
+    font-size: 0.8rem;
+}
+.calendar-day.today { background-color: #f0f9ff; }
+.calendar-day.other-month { background-color: #fcfcfc; color: #ccc; }
+.calendar-day-number { font-weight: bold; margin-bottom: 4px; color: #334155; }
+
+.cal-event {
+    font-size: 0.7rem; padding: 3px 5px; margin-bottom: 3px; border-radius: 4px;
+    background-color: #e0f2fe; color: #0369a1; border-left: 3px solid #0ea5e9;
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-event:hover { background-color: #bae6fd; }
