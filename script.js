@@ -1982,23 +1982,62 @@ window.loadVouchers = async () => {
     rBody.innerHTML = ''; reqBody.innerHTML = ''; retBody.innerHTML = ''; poBody.innerHTML = ''; whPOBody.innerHTML = '';
     if(prBody) prBody.innerHTML = '';
     
+    // Stats Counters
+    let stats = { pr: 0, poActive: 0, transit: 0, completed: 0 };
+    const currentMonth = new Date().getMonth();
+
     let prCount = 0;
     snap.forEach(d => {
         const v = d.data();
+        const vDate = v.date ? new Date(v.date) : new Date();
         
         if(v.type === 'purchase_order') {
+            // Stats
+            if(v.status === 'ordered' || v.status === 'partially_received') stats.poActive++;
+            if(v.status === 'shipped') stats.transit++;
+            if(v.status === 'completed' || v.status === 'received') {
+                if(vDate.getMonth() === currentMonth) stats.completed++;
+            }
+
+            // Progress Logic
+            let progress = 0;
+            let progressColor = 'bg-secondary';
+            let statusLabel = v.status.toUpperCase();
+            
+            if(v.status === 'ordered') { progress = 25; progressColor = 'bg-info'; }
+            else if(v.status === 'shipped') { progress = 50; progressColor = 'bg-primary'; }
+            else if(v.status === 'partially_received') { progress = 75; progressColor = 'bg-warning'; }
+            else if(v.status === 'received' || v.status === 'completed') { progress = 100; progressColor = 'bg-success'; }
+
             const row = `
             <tr>
-                <td>
-                    <div class="fw-bold text-dark">${v.ref || d.id.slice(0,6).toUpperCase()}</div>
+                <td class="ps-4">
+                    <div class="fw-bold text-dark text-uppercase">${v.ref || d.id.slice(0,6)}</div>
                     <div class="small text-muted">${v.date}</div>
                 </td>
                 <td>
-                    <div class="fw-bold text-primary">${v.party}</div>
-                    <div class="small text-muted">${v.items.length} Items</div>
+                    <div class="fw-bold text-dark">${v.party}</div>
+                    <div class="small text-muted"><i class="fas fa-box me-1"></i>${v.items.length} Items</div>
                 </td>
-                <td><span class="badge bg-info bg-opacity-10 text-info border border-info">${v.status.toUpperCase()}</span></td>
-                <td class="text-end">
+                <td>
+                    <div class="small text-muted mb-1">
+                        ${v.items.slice(0,2).map(i => i.itemName).join(', ')} ${v.items.length > 2 ? '...' : ''}
+                    </div>
+                </td>
+                <td>
+                    <div class="d-flex align-items-center">
+                        <div class="flex-grow-1 me-2">
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span class="fw-bold ${progressColor.replace('bg-', 'text-')}">${statusLabel}</span>
+                                <span class="text-muted">${progress}%</span>
+                            </div>
+                            <div class="progress" style="height: 6px;">
+                                <div class="progress-bar ${progressColor}" role="progressbar" style="width: ${progress}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </td>
+                <td class="text-end pe-4">
                     <button class="btn btn-sm btn-light border shadow-sm me-1" onclick="printVoucher('${d.id}')" title="Print PO"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-outline-primary border shadow-sm" onclick="comparePO('${d.id}')" title="Track/Check"><i class="fas fa-search"></i></button>
                 </td>
@@ -2020,7 +2059,10 @@ window.loadVouchers = async () => {
             whPOBody.innerHTML += whRow;
         }
         else if(v.type === 'purchase_request') {
-            if(v.status === 'pending') prCount++;
+            if(v.status === 'pending') {
+                prCount++;
+                stats.pr++;
+            }
             
             let badgeClass = 'bg-warning text-dark';
             if(v.status === 'completed') badgeClass = 'bg-success';
@@ -2041,16 +2083,20 @@ window.loadVouchers = async () => {
 
             const row = `
             <tr>
-                <td>
-                    <div class="fw-bold text-dark">${v.ref || 'PR-'+d.id.slice(0,4)}</div>
+                <td class="ps-4">
+                    <div class="fw-bold text-dark text-uppercase">${v.ref || 'PR-'+d.id.slice(0,4)}</div>
                     <div class="small text-muted">${v.date}</div>
                 </td>
                 <td>
                     <div class="fw-bold">${v.reqBy || 'Warehouse'}</div>
-                    <div class="small text-muted">${v.items.length} Items</div>
+                    <div class="small text-muted">Requested By</div>
+                </td>
+                <td>
+                    <div class="small text-dark">${v.items.length} Items</div>
+                    <div class="small text-muted text-truncate" style="max-width: 200px;">${v.items.map(i=>i.itemName).join(', ')}</div>
                 </td>
                 <td><span class="badge ${badgeClass}">${v.status.toUpperCase()}</span></td>
-                <td class="text-end">${actions}</td>
+                <td class="text-end pe-4">${actions}</td>
             </tr>`;
             if(prBody) prBody.innerHTML += row;
         }
@@ -2112,17 +2158,29 @@ window.loadVouchers = async () => {
     
     const prBadge = document.getElementById('prBadge');
     if(prBadge) prBadge.innerText = prCount;
+    const prBadgeInner = document.getElementById('prBadgeInner');
+    if(prBadgeInner) prBadgeInner.innerText = prCount;
+
+    // Update Dashboard Stats
+    const elPR = document.getElementById('procStatsPR'); if(elPR) elPR.innerText = stats.pr;
+    const elPO = document.getElementById('procStatsPO'); if(elPO) elPO.innerText = stats.poActive;
+    const elTr = document.getElementById('procStatsTransit'); if(elTr) elTr.innerText = stats.transit;
+    const elCm = document.getElementById('procStatsCompleted'); if(elCm) elCm.innerText = stats.completed;
 }
 
-window.filterPOTable = () => {
-    const filter = document.getElementById('poStatusFilter').value.toLowerCase();
+window.filterPOTableSmart = () => {
+    const search = document.getElementById('poSearchInput').value.toLowerCase();
+    const statusFilter = document.getElementById('poStatusFilterSmart').value.toLowerCase();
     const rows = document.querySelectorAll('#poTableBody tr');
+    
     rows.forEach(row => {
-        const statusCell = row.querySelector('td:nth-child(4)');
-        if(statusCell) {
-            const statusText = statusCell.innerText.toLowerCase();
-            row.style.display = (filter === 'all' || statusText.includes(filter)) ? '' : 'none';
-        }
+        const text = row.innerText.toLowerCase();
+        const statusText = row.querySelector('.fw-bold') ? row.querySelector('.fw-bold').innerText.toLowerCase() : ''; // Status is in the progress bar label
+        
+        const matchesSearch = text.includes(search);
+        const matchesStatus = statusFilter === 'all' || text.includes(statusFilter);
+        
+        row.style.display = (matchesSearch && matchesStatus) ? '' : 'none';
     });
 }
 
