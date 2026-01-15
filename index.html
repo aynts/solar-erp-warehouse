@@ -240,7 +240,7 @@
         .kanban-card.status-completed { border-left-color: #6c757d; }
 
         /* Fix for Quick Add Modal appearing behind Voucher Modal */
-        #partyModal { z-index: 1080 !important; }
+        #partyModal, #supplierModal, #customerModal { z-index: 1080 !important; }
     </style>
 </head>
 <body>
@@ -1469,6 +1469,7 @@
             <div class="modal-body pt-0">
                 <input type="hidden" id="voucherType">
                 <input type="hidden" id="relatedPoId"> <!-- For linking PO to Receipt -->
+                <input type="hidden" id="relatedPrId"> <!-- For linking PR to PO -->
                 
                 <div class="row g-3 mb-4">
                     <div class="col-md-6">
