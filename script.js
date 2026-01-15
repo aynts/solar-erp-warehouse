@@ -3314,7 +3314,7 @@ window.printProjectVoucher = async (projectName) => {
                 </div>
                 
                 <div class="mb-4 p-3 bg-light rounded border">
-                    <h5 class="mb-1">Project Name: <strong></strong></h5>
+                    <h5 class="mb-1">Project Name: <strong>${projectName}</strong></h5>
                     <p class="mb-0 text-muted small">This document lists total items sent, returned, and net consumed quantity for billing.</p>
                 </div>
 
