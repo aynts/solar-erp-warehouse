@@ -853,8 +853,8 @@
                                 </a>
                             </li>
                             <li class="nav-item">
-                                <a class="nav-link fw-bold text-secondary" data-bs-toggle="tab" href="#tabKanban" onclick="loadKanban()">
-                                    <i class="fas fa-columns me-2"></i>Kanban Board
+                                <a class="nav-link fw-bold text-secondary" data-bs-toggle="tab" href="#tabStats" onclick="loadSupplierStats()">
+                                    <i class="fas fa-chart-pie me-2"></i>Supplier Analytics
                                 </a>
                             </li>
                         </ul>
@@ -909,37 +909,25 @@
                                 </div>
                             </div>
 
-                            <!-- Kanban (Existing structure, just wrapped) -->
-                            <div class="tab-pane fade" id="tabKanban">
-                                <div class="p-3 bg-light border-bottom">
-                                    <small class="text-muted">Drag and drop is not enabled. Use actions to move cards.</small>
+                            <!-- Supplier Stats Tab -->
+                            <div class="tab-pane fade" id="tabStats">
+                                <div class="p-3 border-bottom bg-light">
+                                    <small class="text-muted"><i class="fas fa-info-circle me-1"></i> Performance overview of active suppliers.</small>
                                 </div>
-                        <div class="kanban-board pb-3">
-                            <div class="kanban-col">
-                                <div class="kanban-col-header text-warning" style="border-color: #ffc107;">Requested <span class="badge bg-warning text-dark rounded-pill" id="kb-count-requested">0</span></div>
-                                <div id="kb-col-requested"></div>
-                            </div>
-                            <div class="kanban-col">
-                                <div class="kanban-col-header text-info" style="border-color: #0dcaf0;">Ordered <span class="badge bg-info text-dark rounded-pill" id="kb-count-ordered">0</span></div>
-                                <div id="kb-col-ordered"></div>
-                            </div>
-                            <div class="kanban-col">
-                                <div class="kanban-col-header" style="color: #6610f2; border-color: #6610f2;">Shipped <span class="badge text-white rounded-pill" style="background-color: #6610f2;" id="kb-count-shipped">0</span></div>
-                                <div id="kb-col-shipped"></div>
-                            </div>
-                            <div class="kanban-col">
-                                <div class="kanban-col-header" style="color: #fd7e14; border-color: #fd7e14;">Partial <span class="badge text-white rounded-pill" style="background-color: #fd7e14;" id="kb-count-partial">0</span></div>
-                                <div id="kb-col-partial"></div>
-                            </div>
-                            <div class="kanban-col">
-                                <div class="kanban-col-header text-success" style="border-color: #198754;">Received <span class="badge bg-success rounded-pill" id="kb-count-received">0</span></div>
-                                <div id="kb-col-received"></div>
-                            </div>
-                            <div class="kanban-col">
-                                <div class="kanban-col-header text-secondary" style="border-color: #6c757d;">Completed <span class="badge bg-secondary rounded-pill" id="kb-count-completed">0</span></div>
-                                <div id="kb-col-completed"></div>
-                            </div>
-                        </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover align-middle mb-0">
+                                        <thead class="bg-light text-secondary small text-uppercase">
+                                            <tr>
+                                                <th class="ps-4">Supplier Name</th>
+                                                <th class="text-center">Total POs</th>
+                                                <th class="text-center">Active / Pending</th>
+                                                <th class="text-center">Completed</th>
+                                                <th class="text-end pe-4">Last Order Date</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="supplierStatsBody"></tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
