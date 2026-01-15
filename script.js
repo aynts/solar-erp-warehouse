@@ -1897,7 +1897,7 @@ window.receivePO = async (poId) => {
             if (po.status === 'ordered' || po.status === 'shipped' || po.status === 'partially_received') {
                 if(confirm("Items fully received. Mark PO as 'Received' on Kanban board?")) {
                     await updateDoc(doc(db, "vouchers", poId), { status: 'received' });
-                    loadKanban();
+                    loadVouchers();
                 }
             } else {
                 alert("This PO is already fully received! (ဤ PO အတွက် ပစ္စည်းများအားလုံး လက်ခံရရှိပြီးဖြစ်ပါသည်)");
