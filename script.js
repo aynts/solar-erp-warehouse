@@ -1930,6 +1930,7 @@ window.loadVouchers = async () => {
                 <td>${v.items.length} Items</td>
                 <td><span class="badge bg-info text-dark">${v.status}</span></td>
                 <td>
+                    <button class="btn btn-sm btn-light border me-1" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-outline-primary" onclick="comparePO('${d.id}')">Check</button>
                 </td>
             </tr>`;
@@ -1958,6 +1959,7 @@ window.loadVouchers = async () => {
                 <td>${v.items.length} Items</td>
                 <td><span class="badge bg-warning text-dark">${v.status}</span></td>
                 <td>
+                    <button class="btn btn-sm btn-light border me-1" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-primary" onclick="convertPRtoPO('${d.id}')">Create PO</button>
                     <button class="btn btn-sm btn-outline-danger ms-1" onclick="rejectVoucher('${d.id}')">Reject</button>
                 </td>
@@ -2915,6 +2917,7 @@ window.printProjectSignOff = async (id) => {
         printWindow.document.write(`
             <div class="container">
                 <div class="header text-center">
+                    <img src="MHLogo.png" alt="Logo" style="height: 60px; margin-bottom: 10px;">
                     <h2 class="fw-bold text-uppercase">Project Completion & Acceptance Certificate</h2>
                     <h5 class="text-muted">Mother Home Solar Co., Ltd.</h5>
                 </div>
@@ -3020,6 +3023,7 @@ window.printProjectCompletionReport = async (id) => {
         printWindow.document.write(`
             <div class="container">
                 <div class="text-center mb-4 border-bottom pb-3">
+                    <img src="MHLogo.png" alt="Logo" style="height: 60px; margin-bottom: 10px;">
                     <h2 class="fw-bold">PROJECT COMPLETION REPORT</h2>
                     <h5 class="text-muted">Mother Home Solar Co., Ltd.</h5>
                 </div>

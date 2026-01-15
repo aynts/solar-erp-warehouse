@@ -224,7 +224,7 @@ body {
 .kanban-card.status-completed { border-left-color: #6c757d; }
 
 /* Fix for Quick Add Modal appearing behind Voucher Modal */
-#partyModal { z-index: 1080 !important; }
+#partyModal, #supplierModal, #customerModal { z-index: 1080 !important; }
 /* Header.css */
 
 .brand-lockup {
