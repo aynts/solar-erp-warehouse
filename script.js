@@ -2619,6 +2619,10 @@ window.openJobOrderModal = async (id = null, prefillCustomer = null) => {
     const modal = new bootstrap.Modal(document.getElementById('jobOrderModal'));
     document.getElementById('jobId').value = id || '';
 
+    // Cleanup previous dynamic buttons
+    const existingReopen = document.getElementById('btnReopenJob');
+    if(existingReopen) existingReopen.remove();
+
     // Prepare Staff Checkboxes
     let currentStaff = [];
     
@@ -2638,6 +2642,33 @@ window.openJobOrderModal = async (id = null, prefillCustomer = null) => {
         document.getElementById('jobAddress').value = job.address || '';
         document.getElementById('jobDesc').value = job.desc || '';
         document.getElementById('jobModalTitle').innerText = "Edit Job Order";
+
+        // Disable Save if Completed
+        const saveBtn = document.querySelector('#jobOrderModal .modal-footer .btn-primary');
+        if (job.status === 'Completed') {
+            saveBtn.disabled = true;
+            saveBtn.innerHTML = '<i class="fas fa-lock me-1"></i> Completed';
+            
+            // Add Re-open Button for Admins
+            if (currentUserRole === 'admin' || currentUserRole === 'superadmin') {
+                const reopenBtn = document.createElement('button');
+                reopenBtn.id = 'btnReopenJob';
+                reopenBtn.type = 'button';
+                reopenBtn.className = 'btn btn-outline-danger me-2';
+                reopenBtn.innerHTML = '<i class="fas fa-unlock-alt me-1"></i> Re-open';
+                reopenBtn.onclick = async () => {
+                    if(!confirm("Re-open this job? Status will change to 'Work in Progress'.")) return;
+                    await updateDoc(doc(db, "job_orders", id), { status: 'Work in Progress' });
+                    await setDoc(doc(db, "project_status", job.customer), { status: 'active' }, { merge: true });
+                    bootstrap.Modal.getInstance(document.getElementById('jobOrderModal')).hide();
+                    loadJobOrders();
+                };
+                saveBtn.parentNode.insertBefore(reopenBtn, saveBtn);
+            }
+        } else {
+            saveBtn.disabled = false;
+            saveBtn.innerText = 'Save Job';
+        }
     } else {
         document.getElementById('jobCustomer').value = prefillCustomer || '';
         document.getElementById('jobDate').value = new Date().toISOString().split('T')[0];
@@ -2648,6 +2679,10 @@ window.openJobOrderModal = async (id = null, prefillCustomer = null) => {
         document.getElementById('jobDesc').value = '';
         document.getElementById('jobModalTitle').innerText = "New Job Order";
         
+        const saveBtn = document.querySelector('#jobOrderModal .modal-footer .btn-primary');
+        saveBtn.disabled = false;
+        saveBtn.innerText = 'Save Job';
+
         if(prefillCustomer) {
             autoFillJobDetails();
         }
@@ -2701,6 +2736,14 @@ window.saveJobOrder = async () => {
     };
 
     if(id) {
+        // Validation: Prevent editing if Completed (unless re-opening)
+        const currentDoc = await getDoc(doc(db, "job_orders", id));
+        if (currentDoc.exists()) {
+            const currentJob = currentDoc.data();
+            if (currentJob.status === 'Completed' && data.status === 'Completed') {
+                return alert("This Job Order is Completed and locked. Please Re-open it first to make changes.");
+            }
+        }
         await updateDoc(doc(db, "job_orders", id), data);
     } else {
         await addDoc(collection(db, "job_orders"), { ...data, createdAt: serverTimestamp() });
@@ -2750,10 +2793,20 @@ window.openBOMModal = async (jobId) => {
     const docSnap = await getDoc(doc(db, "job_orders", jobId));
     const job = docSnap.data();
     const bom = job.bom || [];
+
+    // Disable buttons if Completed
+    const saveBtn = document.querySelector('#bomModal .modal-footer .btn-success');
+    const prBtn = document.querySelector('#bomModal .modal-footer .btn-warning');
+    const addBtn = document.querySelector('#bomModal .modal-body .btn-outline-dark');
+
+    const isCompleted = job.status === 'Completed';
+    if(saveBtn) saveBtn.disabled = isCompleted;
+    if(prBtn) prBtn.disabled = isCompleted;
+    if(addBtn) isCompleted ? addBtn.classList.add('hidden') : addBtn.classList.remove('hidden');
     
     if(bom.length > 0) {
         bom.forEach(item => addBOMRow(item));
-    } else {
+    } else if (!isCompleted) {
         addBOMRow();
     }
     
@@ -2836,6 +2889,13 @@ window.createPRFromBOM = () => {
 
 window.saveBOM = async () => {
     const jobId = document.getElementById('bomJobId').value;
+    
+    // Validation: Prevent editing BOM if Job is Completed
+    const jobDoc = await getDoc(doc(db, "job_orders", jobId));
+    if (jobDoc.exists() && jobDoc.data().status === 'Completed') {
+        return alert("Cannot edit BOM for a Completed Job Order.");
+    }
+
     const rows = document.querySelectorAll('#bomItemsBody tr');
     const bom = [];
     
