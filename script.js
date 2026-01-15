@@ -685,50 +685,93 @@ async function loadDashboard() {
     // Step 1: Ensure we have inventory data without re-fetching if possible
     if (!isInventoryLoaded) await loadInventory(false);
 
-    // Step 2: Calculate stats from MEMORY (Zero reads)
+    // Date Display
+    const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const dateEl = document.getElementById('dashDateDisplay');
+    if(dateEl) dateEl.innerText = new Date().toLocaleDateString('en-US', dateOptions);
+
+    // Step 2: Calculate stats from MEMORY
     let totalItems = 0;
-    let lowStock = 0;
-    let liveStockHTML = "";
+    let lowStockItems = [];
 
     inventory.forEach(data => {
         totalItems++;
-        if(data.balance < 5) lowStock++;
-        liveStockHTML += `<tr><td>${data.brand} ${data.model}</td><td class="text-end fw-bold">${data.balance}</td></tr>`;
+        if(data.balance < 5) lowStockItems.push(data);
     });
 
     document.getElementById('dashTotalItems').innerText = totalItems;
-    document.getElementById('dashLowStock').innerText = lowStock;
-    document.getElementById('dashLiveStockBody').innerHTML = liveStockHTML;
+    document.getElementById('dashLowStock').innerText = lowStockItems.length;
 
-    // Pending Requests - This we must fetch, but it's small usually
-    // Only fetch if we haven't fetched recently? No, transactions change often. 
-    // We will fetch vouchers but keep it light.
-    const qVoucher = query(collection(db, "vouchers"), where("status", "==", "draft"));
-    const snapVoucher = await getDocs(qVoucher);
-    let pendingIn = 0;
-    let pendingOut = 0;
-    
-    snapVoucher.forEach(d => {
-        if(d.data().type === 'receipt' || d.data().type === 'return') pendingIn++;
-        else pendingOut++;
-    });
-
-    document.getElementById('dashPendingIn').innerText = pendingIn;
-    document.getElementById('dashPendingOut').innerText = pendingOut;
-
-    // NEW: Calculate Pending PO Value (Status: Ordered)
-    let pendingPOValue = 0;
-    // Querying by status 'ordered' implicitly targets Purchase Orders in this workflow
-    const qPO = query(collection(db, "vouchers"), where("status", "==", "ordered"));
-    const snapPO = await getDocs(qPO);
-    snapPO.forEach(d => {
-        const v = d.data();
-        if(v.items && Array.isArray(v.items)) {
-            v.items.forEach(i => { pendingPOValue += (i.qty * (i.estPrice || 0)); });
+    // Populate Low Stock List (Top 5)
+    const lowStockListEl = document.getElementById('dashLowStockList');
+    if(lowStockListEl) {
+        lowStockListEl.innerHTML = '';
+        if(lowStockItems.length === 0) {
+            lowStockListEl.innerHTML = '<li class="list-group-item text-muted text-center py-3">No low stock items</li>';
+        } else {
+            lowStockItems.slice(0, 5).forEach(i => {
+                lowStockListEl.innerHTML += `
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-3 py-2">
+                        <div>
+                            <div class="fw-bold text-dark" style="font-size: 0.85rem;">${i.itemCode}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;">${i.brand} ${i.model}</div>
+                        </div>
+                        <span class="badge bg-danger bg-opacity-10 text-danger rounded-pill">${i.balance}</span>
+                    </li>
+                `;
+            });
         }
+    }
+
+    // Pending Counts (Consolidated)
+    const qVoucher = query(collection(db, "vouchers"), where("status", "in", ["draft", "pending", "ordered"]));
+    const snapVoucher = await getDocs(qVoucher);
+    let pendingCount = 0;
+    snapVoucher.forEach(d => {
+        pendingCount++;
     });
-    const poValEl = document.getElementById('dashPendingPOValue');
-    if(poValEl) poValEl.innerText = Math.round(pendingPOValue).toLocaleString() + " MMK";
+    document.getElementById('dashPendingTotal').innerText = pendingCount;
+
+    // Active Jobs Count
+    const qJobs = query(collection(db, "job_orders"), where("status", "not-in", ["Completed", "Cancelled"]));
+    const snapJobs = await getDocs(qJobs);
+    document.getElementById('dashActiveJobs').innerText = snapJobs.size;
+
+    // Recent Transactions (New)
+    const qTrans = query(collection(db, "transactions"), orderBy("date", "desc"), limit(5));
+    const snapTrans = await getDocs(qTrans);
+    const transListEl = document.getElementById('dashRecentTrans');
+    if(transListEl) {
+        transListEl.innerHTML = '';
+        if(snapTrans.empty) {
+            transListEl.innerHTML = '<div class="text-center text-muted py-3">No recent activity</div>';
+        } else {
+            snapTrans.forEach(d => {
+                const t = d.data();
+                const date = t.date ? new Date(t.date.seconds * 1000).toLocaleDateString() : '-';
+                const icon = t.type === 'in' ? '<i class="fas fa-arrow-down text-success"></i>' : '<i class="fas fa-arrow-up text-danger"></i>';
+                const bgClass = t.type === 'in' ? 'bg-success' : 'bg-danger';
+                
+                transListEl.innerHTML += `
+                    <div class="list-group-item list-group-item-action d-flex align-items-center px-3 py-3 border-bottom">
+                        <div class="rounded-circle ${bgClass} bg-opacity-10 d-flex align-items-center justify-content-center me-3" style="width: 36px; height: 36px; min-width: 36px;">
+                            ${icon}
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between">
+                                <span class="fw-bold text-dark" style="font-size: 0.9rem;">${t.itemName}</span>
+                                <span class="small text-muted">${date}</span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-1">
+                                <span class="small text-muted">${t.party}</span>
+                                <span class="badge ${bgClass} rounded-pill">${t.type === 'in' ? '+' : '-'}${t.qty}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+    }
 
     loadOperationsDashboard();
     renderCalendar();
