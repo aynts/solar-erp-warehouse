@@ -716,6 +716,20 @@ async function loadDashboard() {
     document.getElementById('dashPendingIn').innerText = pendingIn;
     document.getElementById('dashPendingOut').innerText = pendingOut;
 
+    // NEW: Calculate Pending PO Value (Status: Ordered)
+    let pendingPOValue = 0;
+    // Querying by status 'ordered' implicitly targets Purchase Orders in this workflow
+    const qPO = query(collection(db, "vouchers"), where("status", "==", "ordered"));
+    const snapPO = await getDocs(qPO);
+    snapPO.forEach(d => {
+        const v = d.data();
+        if(v.items && Array.isArray(v.items)) {
+            v.items.forEach(i => { pendingPOValue += (i.qty * (i.estPrice || 0)); });
+        }
+    });
+    const poValEl = document.getElementById('dashPendingPOValue');
+    if(poValEl) poValEl.innerText = Math.round(pendingPOValue).toLocaleString() + " MMK";
+
     loadOperationsDashboard();
     renderCalendar();
 }
@@ -1932,13 +1946,18 @@ window.loadVouchers = async () => {
         if(v.type === 'purchase_order') {
             const row = `
             <tr>
-                <td>${v.date}</td>
-                <td>${v.party}</td>
-                <td>${v.items.length} Items</td>
-                <td><span class="badge bg-info text-dark">${v.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-light border me-1" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
-                    <button class="btn btn-sm btn-outline-primary" onclick="comparePO('${d.id}')">Check</button>
+                    <div class="fw-bold text-dark">${v.ref || d.id.slice(0,6).toUpperCase()}</div>
+                    <div class="small text-muted">${v.date}</div>
+                </td>
+                <td>
+                    <div class="fw-bold text-primary">${v.party}</div>
+                    <div class="small text-muted">${v.items.length} Items</div>
+                </td>
+                <td><span class="badge bg-info bg-opacity-10 text-info border border-info">${v.status.toUpperCase()}</span></td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-light border shadow-sm me-1" onclick="printVoucher('${d.id}')" title="Print PO"><i class="fas fa-print"></i></button>
+                    <button class="btn btn-sm btn-outline-primary border shadow-sm" onclick="comparePO('${d.id}')" title="Track/Check"><i class="fas fa-search"></i></button>
                 </td>
             </tr>`;
             poBody.innerHTML += row;
@@ -1958,34 +1977,37 @@ window.loadVouchers = async () => {
             whPOBody.innerHTML += whRow;
         }
         else if(v.type === 'purchase_request') {
-            prCount++;
             if(v.status === 'pending') prCount++;
             
             let badgeClass = 'bg-warning text-dark';
             if(v.status === 'completed') badgeClass = 'bg-success';
             else if(v.status === 'rejected') badgeClass = 'bg-danger';
 
-            let actions = `<button class="btn btn-sm btn-light border me-1" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>`;
+            let actions = ``;
             if(v.status === 'pending') {
-                actions += `<button class="btn btn-sm btn-primary" onclick="convertPRtoPO('${d.id}')">Create PO</button>
-                            <button class="btn btn-sm btn-outline-danger ms-1" onclick="rejectVoucher('${d.id}')">Reject</button>`;
+                actions = `
+                    <button class="btn btn-sm btn-primary shadow-sm" onclick="convertPRtoPO('${d.id}')"><i class="fas fa-file-invoice me-1"></i>Create PO</button>
+                    <button class="btn btn-sm btn-outline-danger border-0 ms-1" onclick="rejectVoucher('${d.id}')" title="Reject"><i class="fas fa-times"></i></button>
+                `;
             } else if(v.status === 'completed') {
-                actions += `<span class="badge bg-light text-success border border-success"><i class="fas fa-check me-1"></i>PO Created</span>`;
+                actions = `<span class="text-success small fw-bold"><i class="fas fa-check-circle me-1"></i>PO Created</span>`;
             }
+            
+            // Add Print to all
+            actions = `<button class="btn btn-sm btn-light border shadow-sm me-2" onclick="printVoucher('${d.id}')" title="Print Request"><i class="fas fa-print"></i></button>` + actions;
 
             const row = `
             <tr>
-                <td>${v.date}</td>
-                <td>${v.reqBy || 'Warehouse'}</td>
-                <td>${v.items.length} Items</td>
-                <td><span class="badge bg-warning text-dark">${v.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-light border me-1" onclick="printVoucher('${d.id}')"><i class="fas fa-print"></i></button>
-                    <button class="btn btn-sm btn-primary" onclick="convertPRtoPO('${d.id}')">Create PO</button>
-                    <button class="btn btn-sm btn-outline-danger ms-1" onclick="rejectVoucher('${d.id}')">Reject</button>
+                    <div class="fw-bold text-dark">${v.ref || 'PR-'+d.id.slice(0,4)}</div>
+                    <div class="small text-muted">${v.date}</div>
                 </td>
-                <td><span class="badge ${badgeClass}">${v.status}</span></td>
-                <td>${actions}</td>
+                <td>
+                    <div class="fw-bold">${v.reqBy || 'Warehouse'}</div>
+                    <div class="small text-muted">${v.items.length} Items</div>
+                </td>
+                <td><span class="badge ${badgeClass}">${v.status.toUpperCase()}</span></td>
+                <td class="text-end">${actions}</td>
             </tr>`;
             if(prBody) prBody.innerHTML += row;
         }
@@ -2064,8 +2086,14 @@ window.filterPOTable = () => {
 window.convertPRtoPO = async (prId) => {
     toggleLoading(true);
     const docSnap = await getDoc(doc(db, "vouchers", prId));
-    if(!docSnap.exists()) return;
+    if(!docSnap.exists()) { toggleLoading(false); return; }
     const pr = docSnap.data();
+    
+    if(pr.status === 'completed') {
+        toggleLoading(false);
+        alert("This Purchase Request is already completed (PO Created).");
+        return;
+    }
     
     openVoucherModal('purchase_order');
     document.getElementById('voucherParty').value = pr.party || ''; // Supplier if suggested
@@ -2107,7 +2135,11 @@ window.loadKanban = async () => {
         if (v.type === 'purchase_request' && v.status !== 'rejected') {
             target = 'requested';
             statusClass = 'status-requested';
-            actions = `<button class="btn btn-sm btn-primary w-100 mt-2" onclick="convertPRtoPO('${d.id}')">Create PO</button>`;
+            if (v.status === 'completed') {
+                actions = `<div class="text-center mt-2 text-success small"><i class="fas fa-check-circle"></i> PO Created</div>`;
+            } else {
+                actions = `<button class="btn btn-sm btn-primary w-100 mt-2" onclick="convertPRtoPO('${d.id}')">Create PO</button>`;
+            }
         } else if (v.type === 'purchase_order') {
             if (v.status === 'ordered') {
                 target = 'ordered';
@@ -2718,47 +2750,28 @@ window.openBOMModal = async (jobId) => {
     const docSnap = await getDoc(doc(db, "job_orders", jobId));
     const job = docSnap.data();
     const bom = job.bom || [];
-
-    // Check Lock Status (MRF Issued or later)
-    const isLocked = ['MRF Issued', 'Work in Progress', 'Partially Completed', 'Completed', 'Cancelled'].includes(job.status);
-    const saveBtn = document.querySelector('#bomModal .btn-success');
-    const addBtn = document.querySelector('#bomModal .btn-outline-dark');
-
-    if(isLocked) {
-        if(saveBtn) saveBtn.classList.add('hidden');
-        if(addBtn) addBtn.classList.add('hidden');
-        document.getElementById('bomModalTitle').innerHTML = `<i class="fas fa-list-alt me-2"></i>BOM (Read Only - ${job.status})`;
-    } else {
-        if(saveBtn) saveBtn.classList.remove('hidden');
-        if(addBtn) addBtn.classList.remove('hidden');
-        document.getElementById('bomModalTitle').innerHTML = `<i class="fas fa-list-alt me-2"></i>Bill of Materials (BOM) / Quotation`;
-    }
-
+    
     if(bom.length > 0) {
-        bom.forEach(item => addBOMRow(item, isLocked));
+        bom.forEach(item => addBOMRow(item));
     } else {
-        if(!isLocked) addBOMRow();
-        else tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No BOM items defined.</td></tr>';
+        addBOMRow();
     }
     
     new bootstrap.Modal(document.getElementById('bomModal')).show();
 }
 
-window.addBOMRow = (data = null, disabled = false) => {
+window.addBOMRow = (data = null) => {
     const item = data ? inventory.find(i => i.itemCode === data.itemCode) : null;
     const balance = item ? item.balance : '-';
     // Highlight if requested qty is greater than balance
     const balanceClass = (item && item.balance < (data ? data.qty : 0)) ? 'text-danger fw-bold' : 'text-success';
     
-    const disabledAttr = disabled ? 'disabled' : '';
-    const removeBtn = disabled ? '' : `<button class="btn btn-sm text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button>`;
-
     const row = `
         <tr>
-            <td><input type="text" class="form-control form-control-sm bom-item-search" list="inventoryList" placeholder="Search Item..." value="${data ? data.itemCode : ''}" onchange="updateBOMStock(this)" ${disabledAttr}></td>
-            <td><input type="number" class="form-control form-control-sm bom-qty" value="${data ? data.qty : 1}" min="1" onchange="updateBOMStock(this)" ${disabledAttr}></td>
+            <td><input type="text" class="form-control form-control-sm bom-item-search" list="inventoryList" placeholder="Search Item..." value="${data ? data.itemCode : ''}" onchange="updateBOMStock(this)"></td>
+            <td><input type="number" class="form-control form-control-sm bom-qty" value="${data ? data.qty : 1}" min="1" onchange="updateBOMStock(this)"></td>
             <td><span class="bom-stock small ${balanceClass}">${balance}</span></td>
-            <td>${removeBtn}</td>
+            <td><button class="btn btn-sm text-danger" onclick="this.closest('tr').remove()"><i class="fas fa-times"></i></button></td>
         </tr>
     `;
     document.getElementById('bomItemsBody').insertAdjacentHTML('beforeend', row);
@@ -2823,14 +2836,6 @@ window.createPRFromBOM = () => {
 
 window.saveBOM = async () => {
     const jobId = document.getElementById('bomJobId').value;
-    
-    // Validate Status
-    const docSnap = await getDoc(doc(db, "job_orders", jobId));
-    const job = docSnap.data();
-    if(['MRF Issued', 'Work in Progress', 'Partially Completed', 'Completed', 'Cancelled'].includes(job.status)) {
-        return alert(`Cannot edit BOM. Job status is '${job.status}'.`);
-    }
-
     const rows = document.querySelectorAll('#bomItemsBody tr');
     const bom = [];
     
@@ -3249,7 +3254,7 @@ window.printProjectVoucher = async (projectName) => {
                 </div>
                 
                 <div class="mb-4 p-3 bg-light rounded border">
-                    <h5 class="mb-1">Project Name: <strong>${projectName}</strong></h5>
+                    <h5 class="mb-1">Project Name: <strong></strong></h5>
                     <p class="mb-0 text-muted small">This document lists total items sent, returned, and net consumed quantity for billing.</p>
                 </div>
 
