@@ -149,6 +149,7 @@ async function initApp() {
             window.printProjectCompletionReport = printProjectCompletionReport;
             window.openJobFromUsage = openJobFromUsage;
             window.loadProjectDashboard = loadProjectDashboard;
+            window.exportProjectDashboardCSV = exportProjectDashboardCSV;
             
 
             // --- QR INTEGRATION ---
@@ -4129,28 +4130,64 @@ initApp();
 // --- PROJECT DASHBOARD LOGIC ---
 window.loadProjectDashboard = async () => {
     const tbody = document.getElementById('projectDashboardBody');
+    const chartContainer = document.getElementById('resourceAllocationBody');
+    const filterEl = document.getElementById('projDashFilter');
+    const filter = filterEl ? filterEl.value : 'active';
+
     tbody.innerHTML = '<tr><td colspan="6" class="text-center">Loading...</td></tr>';
+    if(chartContainer) chartContainer.innerHTML = '<div class="text-center text-muted py-3">Loading allocation data...</div>';
 
     const q = query(collection(db, "job_orders"));
     const snap = await getDocs(q);
     
     const projects = {};
+    let totalActiveJobs = 0;
     
     snap.forEach(d => {
         const job = d.data();
         const name = job.customer || 'Unknown';
         
-        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0 };
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set() };
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: null, maxDate: null };
         
         projects[name].total++;
         if(job.status === 'Completed') projects[name].completed++;
-        else if(job.status !== 'Cancelled') projects[name].active++;
+        else if(job.status !== 'Cancelled') {
+            projects[name].active++;
+            totalActiveJobs++;
+        }
+
+        // Track Staff for Active/Ongoing Jobs
+        if(job.status !== 'Completed' && job.status !== 'Cancelled') {
+            if(job.assignedStaff) {
+                if(Array.isArray(job.assignedStaff)) {
+                    job.assignedStaff.forEach(s => projects[name].staff.add(s));
+                } else {
+                    projects[name].staff.add(job.assignedStaff);
+                }
+            }
+        }
+
+        // Track Dates
+        const jStart = job.date;
+        const jEnd = job.endDate || job.date;
+        if (!projects[name].minDate || jStart < projects[name].minDate) projects[name].minDate = jStart;
+        if (!projects[name].maxDate || jEnd > projects[name].maxDate) projects[name].maxDate = jEnd;
     });
     
     tbody.innerHTML = '';
+    if(chartContainer) chartContainer.innerHTML = '';
+    
+    // Filter Logic
+    let sortedKeys = Object.keys(projects);
+    if(filter === 'active') {
+        sortedKeys = sortedKeys.filter(k => projects[k].active > 0);
+    } else if (filter === 'completed') {
+        sortedKeys = sortedKeys.filter(k => projects[k].active === 0 && projects[k].completed > 0);
+    }
     
     // Sort by active count desc
-    const sortedKeys = Object.keys(projects).sort((a,b) => projects[b].active - projects[a].active);
+    sortedKeys.sort((a,b) => projects[b].active - projects[a].active);
     
     sortedKeys.forEach(name => {
         const p = projects[name];
@@ -4185,4 +4222,158 @@ window.loadProjectDashboard = async () => {
     if(sortedKeys.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No active projects found.</td></tr>';
     }
+
+    // Render Resource Allocation Chart
+    if(chartContainer) {
+        // Calculate max staff for scaling
+        let maxStaff = 0;
+        sortedKeys.forEach(k => {
+            if(projects[k].staff.size > maxStaff) maxStaff = projects[k].staff.size;
+        });
+
+        if(maxStaff === 0) {
+            chartContainer.innerHTML = '<div class="text-center text-muted py-4 small">No active staff assignments found for these projects.</div>';
+        } else {
+            sortedKeys.forEach(name => {
+                const p = projects[name];
+                const staffCount = p.staff.size;
+                if(staffCount === 0) return;
+
+                const widthPct = (staffCount / maxStaff) * 100;
+                
+                chartContainer.innerHTML += `
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span class="fw-bold text-dark">${name}</span>
+                            <span class="badge bg-light text-dark border">${staffCount} Staff</span>
+                        </div>
+                        <div class="progress" style="height: 12px;">
+                            <div class="progress-bar bg-indigo" role="progressbar" style="width: ${widthPct}%; background-color: #6610f2;"></div>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+    }
+
+    // Update Stats
+    const totalEl = document.getElementById('projDashActiveTotal');
+    if(totalEl) totalEl.innerText = totalActiveJobs;
+
+    // Render Timeline
+    renderProjectTimeline(projects, filter);
+}
+
+function renderProjectTimeline(projectsData, filter) {
+    const container = document.getElementById('projectTimelineContainer');
+    if(!container) return;
+    
+    // Filter projects based on dropdown
+    let projectNames = Object.keys(projectsData);
+    if(filter === 'active') projectNames = projectNames.filter(n => projectsData[n].active > 0);
+    else if(filter === 'completed') projectNames = projectNames.filter(n => projectsData[n].active === 0 && projectsData[n].completed > 0);
+    
+    if(projectNames.length === 0) {
+        container.innerHTML = '<div class="text-center text-muted p-4">No projects to display</div>';
+        return;
+    }
+
+    // Calculate global min/max dates
+    let minDate = new Date();
+    let maxDate = new Date();
+    let hasDates = false;
+
+    projectNames.forEach(name => {
+        const p = projectsData[name];
+        if(p.minDate && p.maxDate) {
+            const s = new Date(p.minDate);
+            const e = new Date(p.maxDate);
+            if(!hasDates || s < minDate) minDate = s;
+            if(!hasDates || e > maxDate) maxDate = e;
+            hasDates = true;
+        }
+    });
+
+    if(!hasDates) {
+         container.innerHTML = '<div class="text-center text-muted p-4">No date data available</div>';
+         return;
+    }
+
+    // Buffer
+    minDate.setDate(minDate.getDate() - 5);
+    maxDate.setDate(maxDate.getDate() + 15);
+
+    const dayWidth = 40; // px
+    const totalDays = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+    
+    // Build Header
+    let headerHtml = '<div class="gantt-wrapper"><div class="gantt-header">';
+    for(let i=0; i<=totalDays; i++) {
+        const d = new Date(minDate); d.setDate(minDate.getDate() + i);
+        const dayNum = d.getDate();
+        const dayName = d.toLocaleDateString('en-US', {weekday: 'narrow'});
+        headerHtml += `<div class="gantt-header-cell">${dayNum}<br><span style="font-weight:normal;opacity:0.7">${dayName}</span></div>`;
+    }
+    headerHtml += '</div><div class="gantt-body">';
+
+    // Build Rows
+    projectNames.forEach(name => {
+        const p = projectsData[name];
+        if(!p.minDate || !p.maxDate) return;
+
+        const start = new Date(p.minDate);
+        const end = new Date(p.maxDate);
+        
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = p.active > 0 ? '#0d6efd' : '#198754'; // Blue for active, Green for completed
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass};" title="${name}: ${p.minDate} to ${p.maxDate}">
+                    ${name} (${p.active} Active Jobs)
+                </div>
+            </div>`;
+    });
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
+}
+
+window.exportProjectDashboardCSV = async () => {
+    toggleLoading(true);
+    // Re-fetch to ensure fresh data for export
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    const projects = {};
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: job.date, maxDate: job.endDate||job.date };
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+        if(job.assignedStaff) (Array.isArray(job.assignedStaff) ? job.assignedStaff : [job.assignedStaff]).forEach(s => projects[name].staff.add(s));
+        if(job.date < projects[name].minDate) projects[name].minDate = job.date;
+        if((job.endDate||job.date) > projects[name].maxDate) projects[name].maxDate = (job.endDate||job.date);
+    });
+
+    let csv = ["Project Name,Active Jobs,Completed Jobs,Total Jobs,Progress %,Staff Count,Start Date,End Date"];
+    Object.keys(projects).forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        csv.push(`"${name}",${p.active},${p.completed},${p.total},${pct}%,${p.staff.size},${p.minDate},${p.maxDate}`);
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    toggleLoading(false);
 }
