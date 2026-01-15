@@ -2256,9 +2256,7 @@ window.updatePOStatus = async (id, status) => {
     loadVouchers(); // Refresh list
 }
 
-window.rejectVoucher = async (id) => {
-    });
-}
+
 
 window.updatePOStatus = async (id, status) => {
     if(!confirm(`Update status to ${status.toUpperCase()}?`)) return;
