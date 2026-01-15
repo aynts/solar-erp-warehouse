@@ -2009,6 +2009,12 @@ window.loadVouchers = async () => {
             else if(v.status === 'partially_received') { progress = 75; progressColor = 'bg-warning'; }
             else if(v.status === 'received' || v.status === 'completed') { progress = 100; progressColor = 'bg-success'; }
 
+            // Add Ship Button for Ordered status (since Kanban is gone)
+            let shipBtn = '';
+            if(v.status === 'ordered') {
+                shipBtn = `<button class="btn btn-sm btn-outline-indigo border shadow-sm me-1" style="color: #6610f2; border-color: #e2e8f0;" onclick="updatePOStatus('${d.id}', 'shipped')" title="Mark as Shipped"><i class="fas fa-shipping-fast"></i></button>`;
+            }
+
             const row = `
             <tr>
                 <td class="ps-4">
@@ -2038,6 +2044,7 @@ window.loadVouchers = async () => {
                     </div>
                 </td>
                 <td class="text-end pe-4">
+                    ${shipBtn}
                     <button class="btn btn-sm btn-light border shadow-sm me-1" onclick="printVoucher('${d.id}')" title="Print PO"><i class="fas fa-print"></i></button>
                     <button class="btn btn-sm btn-outline-primary border shadow-sm" onclick="comparePO('${d.id}')" title="Track/Check"><i class="fas fa-search"></i></button>
                 </td>
@@ -2206,95 +2213,50 @@ window.convertPRtoPO = async (prId) => {
     toggleLoading(false);
 }
 
-// --- KANBAN BOARD LOGIC ---
-window.loadKanban = async () => {
-    const q = query(collection(db, "vouchers"), orderBy("date", "desc"), limit(100));
+// --- SUPPLIER STATS LOGIC ---
+window.loadSupplierStats = async () => {
+    const q = query(collection(db, "vouchers"), where("type", "==", "purchase_order"));
     const snap = await getDocs(q);
-    
-    const cols = {
-        requested: document.getElementById('kb-col-requested'),
-        ordered: document.getElementById('kb-col-ordered'),
-        shipped: document.getElementById('kb-col-shipped'),
-        partial: document.getElementById('kb-col-partial'),
-        received: document.getElementById('kb-col-received'),
-        completed: document.getElementById('kb-col-completed')
-    };
-    
-    const counts = { requested: 0, ordered: 0, shipped: 0, partial: 0, received: 0, completed: 0 };
-    
-    const canReceive = ['warehouse', 'admin', 'superadmin'].includes(currentUserRole);
-    
-    // Clear columns
-    Object.values(cols).forEach(c => c.innerHTML = '');
+    const stats = {};
 
     snap.forEach(d => {
         const v = d.data();
-        let target = null;
-        let statusClass = '';
-        let actions = '';
-
-        if (v.type === 'purchase_request' && v.status !== 'rejected') {
-            target = 'requested';
-            statusClass = 'status-requested';
-            if (v.status === 'completed') {
-                actions = `<div class="text-center mt-2 text-success small"><i class="fas fa-check-circle"></i> PO Created</div>`;
-            } else {
-                actions = `<button class="btn btn-sm btn-primary w-100 mt-2" onclick="convertPRtoPO('${d.id}')">Create PO</button>`;
-            }
-        } else if (v.type === 'purchase_order') {
-            if (v.status === 'ordered') {
-                target = 'ordered';
-                statusClass = 'status-ordered';
-                actions = `<button class="btn btn-sm btn-outline-primary w-100 mt-2" style="color: #6610f2; border-color: #6610f2;" onclick="updatePOStatus('${d.id}', 'shipped')">Mark Shipped <i class="fas fa-arrow-right"></i></button>`;
-            } else if (v.status === 'shipped') {
-                target = 'shipped';
-                statusClass = 'status-shipped';
-                if (canReceive) {
-                    actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Items</button>`;
-                } else {
-                    actions = `<div class="text-center mt-2 small text-muted fst-italic">Pending Warehouse Receipt</div>`;
-                }
-            } else if (v.status === 'partially_received') {
-                target = 'partial';
-                statusClass = 'status-partially-received';
-                if (canReceive) {
-                    actions = `<button class="btn btn-sm btn-success w-100 mt-2" onclick="receivePO('${d.id}')">Receive Remaining</button>`;
-                } else {
-                    actions = `<div class="text-center mt-2 small text-muted fst-italic">Pending Warehouse Receipt</div>`;
-                }
-            } else if (v.status === 'received') {
-                target = 'received';
-                statusClass = 'status-received';
-                actions = `<button class="btn btn-sm btn-outline-secondary w-100 mt-2" onclick="updatePOStatus('${d.id}', 'completed')">Mark Completed</button>`;
-            } else if (v.status === 'completed') {
-                target = 'completed';
-                statusClass = 'status-completed';
-                actions = `<div class="text-center mt-2 text-success small"><i class="fas fa-check-circle"></i> Done</div>`;
-            }
-        }
-
-        if (target && cols[target]) {
-            counts[target]++;
-            const date = v.date ? new Date(v.date).toLocaleDateString(undefined, {month:'short', day:'numeric'}) : '-';
-            const card = `
-                <div class="kanban-card ${statusClass}">
-                    <div class="d-flex justify-content-between align-items-start mb-2">
-                        <span class="fw-bold text-dark small">${v.ref || d.id.slice(0,6).toUpperCase()}</span>
-                        <span class="text-muted small" style="font-size: 0.75rem;">${date}</span>
-                    </div>
-                    <div class="fw-bold text-primary mb-1 text-truncate">${v.party || 'Unknown'}</div>
-                    <div class="small text-secondary mb-2"><i class="fas fa-box me-1"></i> ${v.items ? v.items.length : 0} Items</div>
-                    ${actions}
-                </div>
-            `;
-            cols[target].innerHTML += card;
-        }
+        const name = v.party || 'Unknown';
+        if(!stats[name]) stats[name] = { total: 0, active: 0, completed: 0, lastDate: '' };
+        
+        stats[name].total++;
+        if(['ordered', 'shipped', 'partially_received'].includes(v.status)) stats[name].active++;
+        if(['received', 'completed'].includes(v.status)) stats[name].completed++;
+        
+        if(v.date > stats[name].lastDate) stats[name].lastDate = v.date;
     });
 
-    // Update counts
-    Object.keys(counts).forEach(k => {
-        const el = document.getElementById(`kb-count-`);
-        if(el) el.innerText = counts[k];
+    const tbody = document.getElementById('supplierStatsBody');
+    if(tbody) {
+        tbody.innerHTML = '';
+        // Sort by Total POs desc
+        Object.keys(stats).sort((a,b) => stats[b].total - stats[a].total).forEach(name => {
+            const s = stats[name];
+            tbody.innerHTML += `
+                <tr>
+                    <td class="ps-4 fw-bold text-dark">${name}</td>
+                    <td class="text-center">${s.total}</td>
+                    <td class="text-center text-primary fw-bold">${s.active}</td>
+                    <td class="text-center text-success">${s.completed}</td>
+                    <td class="text-end pe-4 small text-muted">${s.lastDate}</td>
+                </tr>
+            `;
+        });
+    }
+}
+
+window.updatePOStatus = async (id, status) => {
+    if(!confirm(`Update status to ${status.toUpperCase()}?`)) return;
+    await updateDoc(doc(db, "vouchers", id), { status: status });
+    loadVouchers(); // Refresh list
+}
+
+window.rejectVoucher = async (id) => {
     });
 }
 
