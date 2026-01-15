@@ -16,24 +16,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
 
-      # 2. Node.js environment တည်ဆောက်မယ်
-      - name: Set up Node
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      # 3. Dependencies တွေ သွင်းမယ်
-      - name: Install Dependencies
-        run: npm install
-
-      # 4. Production အတွက် Build ထုတ်မယ် (Code တွေကို ချုံ့မယ်)
-      - name: Build
-        run: npm run build
-
       # 5. GitHub Pages ပေါ်ကို Deploy တင်မယ်
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./root  # အရေးကြီးသည် (အောက်တွင်ရှင်းပြထားသည်)
+          publish_dir: .
