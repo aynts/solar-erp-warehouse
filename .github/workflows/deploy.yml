@@ -36,4 +36,4 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist  # အရေးကြီးသည် (အောက်တွင်ရှင်းပြထားသည်)
+          publish_dir: ./root  # အရေးကြီးသည် (အောက်တွင်ရှင်းပြထားသည်)
