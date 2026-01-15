@@ -2258,8 +2258,6 @@ window.printVoucher = async (id) => {
     });
     
     setTimeout(() => {
-        const qrEl = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
-        if(qrEl) qrContainer.appendChild(qrEl);
         let src = '';
         const img = tempDiv.querySelector('img');
         const canvas = tempDiv.querySelector('canvas');
