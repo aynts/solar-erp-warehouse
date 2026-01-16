@@ -410,23 +410,28 @@ window.loadFinanceView = () => {
 // --- PARTY MANAGEMENT (Suppliers & Projects) ---
 async function loadParties() {
     parties = [];
-    const q = query(collection(db, "parties"));
-    const snap = await getDocs(q);
+    
+    // Load Suppliers
+    const qSup = query(collection(db, "suppliers"));
+    const snapSup = await getDocs(qSup);
+    snapSup.forEach(d => parties.push({ id: d.id, ...d.data(), type: 'supplier' }));
+
+    // Load Customers (Projects)
+    const qCust = query(collection(db, "customers"));
+    const snapCust = await getDocs(qCust);
+    snapCust.forEach(d => parties.push({ id: d.id, ...d.data(), type: 'project' }));
     
     const supList = document.getElementById('supplierList');
     const projList = document.getElementById('projectList');
     if(supList) supList.innerHTML = ''; 
     if(projList) projList.innerHTML = '';
     
-    snap.forEach(d => {
-        const p = d.data();
-        parties.push({ id: d.id, ...p });
+    parties.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.name;
         if(p.type === 'supplier') {
             if(supList) supList.appendChild(opt);
-        }
-        else {
+        } else {
             if(projList) projList.appendChild(opt);
         }
     });
@@ -603,13 +608,14 @@ async function processPartySave(id, name, contact, address, type, modalId) {
         throw new Error(`Error: A ${duplicate.type} named "${duplicate.name}" already exists.`);
     }
 
+    const collectionName = type === 'supplier' ? 'suppliers' : 'customers';
     const data = { name, contact, address, type };
 
     if(id) {
-        await updateDoc(doc(db, "parties", id), data);
+        await updateDoc(doc(db, collectionName, id), data);
     } else {
         if(parties.some(p => p.name.toLowerCase() === name.toLowerCase())) return alert("Name already exists");
-        await addDoc(collection(db, "parties"), { ...data, createdAt: serverTimestamp() });
+        await addDoc(collection(db, collectionName), { ...data, createdAt: serverTimestamp() });
     }
     
     const partyModalEl = document.getElementById('partyModal');
@@ -705,6 +711,29 @@ function generateNextCode() {
 window.handleCategoryChange = () => {
     generateNextCode();
     renderSpecFields();
+}
+
+// --- SYSTEM CODE GENERATOR (Vouchers, Jobs, etc.) ---
+async function generateSystemCode(prefix, collectionName, fieldName = 'ref') {
+    const q = query(collection(db, collectionName), orderBy("createdAt", "desc"), limit(1));
+    const snap = await getDocs(q);
+    let nextNum = 1;
+    const now = new Date();
+    const yy = now.getFullYear().toString().slice(-2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const datePart = `${yy}${mm}`;
+
+    if (!snap.empty) {
+        const data = snap.docs[0].data();
+        const lastCode = data[fieldName] || '';
+        // Expected format: PREFIX-YYMM-XXXX
+        const parts = lastCode.split('-');
+        if (parts.length >= 3 && parts[parts.length - 2] === datePart) {
+            const num = parseInt(parts[parts.length - 1]);
+            if (!isNaN(num)) nextNum = num + 1;
+        }
+    }
+    return `${prefix}-${datePart}-${String(nextNum).padStart(4, '0')}`;
 }
 
 function renderSpecFields(existingSpecs = null) {
@@ -822,6 +851,7 @@ async function loadDashboard() {
     }
 
     loadOperationsDashboard();
+    loadStaffLocationStatus(); // Load Staff Card
     renderCalendar();
 }
 
@@ -1374,10 +1404,10 @@ window.generateDemoData = async () => {
         const customers = ["Mandalay Project A", "Yangon Factory B", "Naypyitaw Ministry"];
         
         for(const s of suppliers) {
-            if(!parties.some(p => p.name === s)) await addDoc(collection(db, "parties"), { name: s, type: 'supplier', createdAt: serverTimestamp() });
+            if(!parties.some(p => p.name === s)) await addDoc(collection(db, "suppliers"), { name: s, type: 'supplier', createdAt: serverTimestamp() });
         }
         for(const c of customers) {
-            if(!parties.some(p => p.name === c)) await addDoc(collection(db, "parties"), { name: c, type: 'project', createdAt: serverTimestamp() });
+            if(!parties.some(p => p.name === c)) await addDoc(collection(db, "customers"), { name: c, type: 'project', createdAt: serverTimestamp() });
         }
         await loadParties(); // Refresh local list
 
@@ -1413,6 +1443,7 @@ window.generateDemoData = async () => {
             
             await addDoc(collection(db, "job_orders"), {
                 customer: j.cust, date: sDate.toISOString().split('T')[0], endDate: eDate.toISOString().split('T')[0],
+                jobId: `JOB-${today.getFullYear().toString().slice(-2)}${String(today.getMonth()+1).padStart(2,'0')}-000${jobs.indexOf(j)+1}`,
                 status: j.status, assignedStaff: j.staff, desc: "Demo Project Installation",
                 phone: "0912345678", address: "Demo Site Address",
                 createdAt: serverTimestamp(), updatedBy: currentUser.email
@@ -1712,7 +1743,7 @@ window.saveVoucher = async (autoProcess = false) => {
     const type = document.getElementById('voucherType').value;
     const party = document.getElementById('voucherParty').value;
     const date = document.getElementById('voucherDate').value;
-    const ref = document.getElementById('voucherLetterRef')?.value || '';
+    let ref = document.getElementById('voucherLetterRef')?.value || '';
     const relatedPoId = document.getElementById('relatedPoId').value;
     const relatedPrId = document.getElementById('relatedPrId').value;
     
@@ -1822,6 +1853,18 @@ window.saveVoucher = async (autoProcess = false) => {
             }
     }
     // ---------------------------
+
+    // Auto-Generate Voucher Code if empty
+    if (!ref) {
+        let prefix = 'VOU';
+        if (type === 'purchase_order') prefix = 'PO';
+        else if (type === 'receipt') prefix = 'GRN';
+        else if (type === 'request') prefix = 'IV'; // Issue Voucher
+        else if (type === 'return') prefix = 'RN';
+        else if (type === 'damage_return') prefix = 'DRN';
+        else if (type === 'purchase_request') prefix = 'PR';
+        ref = await generateSystemCode(prefix, "vouchers", "ref");
+    }
 
     let status = 'draft';
     if (type === 'purchase_order') status = 'ordered'; 
@@ -2573,7 +2616,7 @@ window.loadJobOrders = async (filterProject = null) => {
 
         tbody.innerHTML += `
             <tr>
-                <td class="fw-bold text-primary">${id.slice(0,6).toUpperCase()}</td>
+                <td class="fw-bold text-primary">${job.jobId || id.slice(0,6).toUpperCase()}</td>
                 <td>
                     <div class="fw-bold">${job.customer}</div>
                     ${staffDisplay}
@@ -2703,7 +2746,7 @@ window.printJobOrder = async (id) => {
         document.getElementById('printParty').innerHTML = partyInfo;
         
         document.getElementById('printDate').innerText = job.date;
-        document.getElementById('printRef').innerText = "Ref: " + id.slice(0, 8).toUpperCase();
+        document.getElementById('printRef').innerText = "Ref: " + (job.jobId || id.slice(0, 8).toUpperCase());
         document.getElementById('printId').innerText = id.slice(0, 8).toUpperCase();
         
         // Show Description
@@ -2891,6 +2934,7 @@ window.saveJobOrder = async () => {
         }
         await updateDoc(doc(db, "job_orders", id), data);
     } else {
+        data.jobId = await generateSystemCode('JOB', 'job_orders', 'jobId');
         await addDoc(collection(db, "job_orders"), { ...data, createdAt: serverTimestamp() });
     }
     
@@ -3091,7 +3135,7 @@ window.createMRF = async (jobId) => {
         await addDoc(collection(db, "vouchers"), {
             type: 'request',
             party: job.customer,
-            ref: "MRF-" + jobId.slice(0,6).toUpperCase(),
+            ref: "MRF-" + (job.jobId || jobId.slice(0,6).toUpperCase()),
             jobId: jobId, // Link back to Job Order
             date: new Date().toISOString().split('T')[0],
             status: 'pending', // Send directly to Warehouse as Pending
@@ -3196,7 +3240,7 @@ window.printProjectSignOff = async (id) => {
                         <p><strong>Site Address:</strong><br>${job.address || 'N/A'}</p>
                     </div>
                     <div class="col-6 text-end">
-                        <p><strong>Job Order Ref:</strong> ${id.slice(0,8).toUpperCase()}</p>
+                        <p><strong>Job Order Ref:</strong> ${job.jobId || id.slice(0,8).toUpperCase()}</p>
                         <p><strong>Completion Date:</strong> ${new Date().toLocaleDateString()}</p>
                     </div>
                 </div>
@@ -3303,7 +3347,7 @@ window.printProjectCompletionReport = async (id) => {
                         <strong>Staff:</strong> ${Array.isArray(job.assignedStaff) ? job.assignedStaff.join(', ') : job.assignedStaff}
                     </div>
                     <div class="col-6 text-end">
-                        <strong>Job Ref:</strong> ${id.slice(0,8).toUpperCase()}<br>
+                        <strong>Job Ref:</strong> ${job.jobId || id.slice(0,8).toUpperCase()}<br>
                         <strong>Start Date:</strong> ${job.date}<br>
                         <strong>Completion:</strong> ${job.endDate || new Date().toLocaleDateString()}<br>
                         <span class="badge bg-success fs-6">COMPLETED</span>
@@ -4273,7 +4317,8 @@ window.clearDatabase = async () => {
         await deleteAll("inventory");
         await deleteAll("vouchers");
         await deleteAll("transactions");
-        await deleteAll("parties");
+        await deleteAll("suppliers");
+        await deleteAll("customers");
         await deleteAll("project_status");
         await deleteAll("job_orders");
         
@@ -4490,6 +4535,65 @@ async function loadOperationsDashboard() {
     
     const countEl = document.getElementById('opsActiveCount');
     if(countEl) countEl.innerText = activeCount;
+}
+
+// --- STAFF LOCATION STATUS CARD ---
+async function loadStaffLocationStatus() {
+    const container = document.getElementById('staffLocationContainer');
+    if(!container) return;
+
+    const staffList = [
+        "U Phyo", "U Kyaw Myo Thant", "Ma Zar Zar Naing", "Ma Win Lae Sandar",
+        "Ma Phyo Nandar Min", "Ma Khin Nyein Chan", "Ma Khin Myo Thu",
+        "Ko Ye Thu Min", "Ko Win Htet Paing", "Ko Tun Tun Naing",
+        "Ko Tin Ko Ko Myint", "Ko Thet Paing Tun", "Ko Thant Zin Htwe",
+        "Ko Soe Thiha", "Ko Sai Myat Min Khant", "Ko Phyo Thet Naung",
+        "Ko Phyo Kyaw Kyaw", "Ko Kyaw Zaw Wai", "Ko Bo Hein",
+        "Ko Aung Myo Oo", "Ko Aung Khant Zaw"
+    ];
+
+    // Fetch active jobs (limit 100 recent to check status)
+    const q = query(collection(db, "job_orders"), orderBy("date", "desc"), limit(100));
+    const snap = await getDocs(q);
+    
+    const staffMap = {};
+    // Initialize all as Available
+    staffList.forEach(s => {
+        staffMap[s] = { status: 'Office', project: 'Available', color: 'success', icon: 'fa-building' };
+    });
+
+    snap.forEach(d => {
+        const job = d.data();
+        // Check if job is active
+        if(job.status !== 'Completed' && job.status !== 'Cancelled') {
+            const assigned = Array.isArray(job.assignedStaff) ? job.assignedStaff : (job.assignedStaff ? [job.assignedStaff] : []);
+            assigned.forEach(staffName => {
+                if(staffMap[staffName] !== undefined) {
+                    staffMap[staffName] = { status: 'Site', project: job.customer, color: 'primary', icon: 'fa-hard-hat' };
+                }
+            });
+        }
+    });
+
+    container.innerHTML = '';
+    staffList.forEach(s => {
+        const info = staffMap[s];
+        container.innerHTML += `
+            <div class="col-6 col-md-4 col-xl-3">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body p-2 d-flex align-items-center">
+                        <div class="rounded-circle bg-${info.color} bg-opacity-10 p-2 me-2 text-${info.color} d-flex justify-content-center align-items-center" style="width:35px;height:35px;min-width:35px;">
+                            <i class="fas ${info.icon}"></i>
+                        </div>
+                        <div class="overflow-hidden">
+                            <div class="fw-bold text-dark small text-truncate" title="${s}">${s}</div>
+                            <div class="text-muted small text-truncate" style="font-size: 0.7rem;" title="${info.project}">${info.project}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
 }
 
 // --- CALENDAR LOGIC ---
