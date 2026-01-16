@@ -4,12 +4,13 @@ import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, addD
 
 // --- HARDCODED CONFIGURATION ---
 const firebaseConfig = {
-    apiKey: "AIzaSyAe6YjIBihzTl7_jRShoDqDKoK5DrYhsfY",
-    authDomain: "solar-erp-warehouse-2135-69979.firebaseapp.com",
-    projectId: "solar-erp-warehouse-2135-69979",
-    storageBucket: "solar-erp-warehouse-2135-69979.firebasestorage.app",
-    messagingSenderId: "587844692830",
-    appId: "1:587844692830:web:706e74de156c5aec1c3dcf"
+    apiKey: "AIzaSyCC_extnva4tzETKgInxCp1eBkCvU5YMH8",
+    authDomain: "motherhomesolarwarehouseerp.firebaseapp.com",
+    projectId: "motherhomesolarwarehouseerp",
+    storageBucket: "motherhomesolarwarehouseerp.firebasestorage.app",
+    messagingSenderId: "465177516115",
+    appId: "1:465177516115:web:3c01d9171a8be67d548ea6",
+    measurementId: "G-3DFLEEJM7V"
 };
 
 let app, auth, db;
@@ -3975,7 +3976,7 @@ window.clearDatabase = async () => {
     if(currentUserRole !== 'superadmin') return alert("Access Denied: SuperAdmin privileges required.");
     
     const confirmCode = Math.floor(1000 + Math.random() * 9000);
-    const input = prompt(`⚠ WARNING: SYSTEM RESET ⚠\n\nThis will permanently DELETE ALL:\n- Inventory Items\n- Vouchers & Receipts\n- Transactions\n- Parties & Projects\n\nTo confirm, type this code: `);
+    const input = prompt(`⚠ WARNING: SYSTEM RESET ⚠\n\nThis will permanently DELETE ALL:\n- Inventory Items\n- Vouchers & Receipts\n- Transactions\n- Parties & Projects\n- Job Orders\n\n(User Accounts will NOT be deleted)\n\nTo confirm, type this code: ${confirmCode}`);
     
     if(input !== String(confirmCode)) return alert("Incorrect code. Operation cancelled.");
     
@@ -3985,14 +3986,21 @@ window.clearDatabase = async () => {
         const deleteAll = async (colName) => {
             const q = query(collection(db, colName));
             const snap = await getDocs(q);
-            const batch = writeBatch(db);
+            
+            let batch = writeBatch(db);
             let count = 0;
-            snap.forEach(doc => {
+            
+            for(const doc of snap.docs) {
                 batch.delete(doc.ref);
                 count++;
-            });
+                if(count >= 450) {
+                    await batch.commit();
+                    batch = writeBatch(db);
+                    count = 0;
+                }
+            }
             if(count > 0) await batch.commit();
-            console.log(`Deleted  from `);
+            console.log(`Deleted from ${colName}`);
         };
 
         await deleteAll("inventory");
@@ -4000,6 +4008,7 @@ window.clearDatabase = async () => {
         await deleteAll("transactions");
         await deleteAll("parties");
         await deleteAll("project_status");
+        await deleteAll("job_orders");
         
         alert("System has been reset successfully. Page will reload.");
         location.reload();
