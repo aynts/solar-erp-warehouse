@@ -635,29 +635,25 @@ window.quickAddParty = async () => {
     openPartyModal(partyType);
 }
 
+// --- HELPER: Get Prefix by Category ---
+function getCategoryPrefix(cat) {
+    const map = {
+        'Solar': 'SOL', 'Battery': 'BAT', 'Inverter': 'INV', 'Solar Pumps': 'PMP',
+        'Solar Controllers': 'CTR', 'All-in-One': 'AIO', 'Powerstations': 'PWR',
+        'Audio Systems': 'AUD', 'AC Accessories': 'ACC', 'DC Accessories': 'DCC',
+        'Breaker Box': 'BOX', 'Cables and Wiring Accessories': 'CAB',
+        'Earthing System Kit': 'EAR', 'Rack Accessories': 'RAK',
+        'Generic Items': 'GEN', 'Package': 'PKG', 'Fixed Assets': 'FIX'
+    };
+    return map[cat] || 'GEN';
+}
+
 // --- UNIQUE CODE GENERATOR & DYNAMIC FIELDS ---
 function generateNextCode() {
     const cat = document.getElementById('itemCategory').value;
     const brandInput = document.getElementById('itemBrand').value;
     
-    let prefix = 'GEN'; 
-    if(cat === 'Solar') prefix = 'SOL';
-    else if(cat === 'Battery') prefix = 'BAT';
-    else if(cat === 'Inverter') prefix = 'INV';
-    else if(cat === 'Solar Pumps') prefix = 'PMP';
-    else if(cat === 'Solar Controllers') prefix = 'CTR';
-    else if(cat === 'All-in-One') prefix = 'AIO';
-    else if(cat === 'Powerstations') prefix = 'PWR';
-    else if(cat === 'Audio Systems') prefix = 'AUD';
-    else if(cat === 'AC Accessories') prefix = 'ACC';
-    else if(cat === 'DC Accessories') prefix = 'DCC';
-    else if(cat === 'Breaker Box') prefix = 'BOX';
-    else if(cat === 'Cables and Wiring Accessories') prefix = 'CAB';
-    else if(cat === 'Earthing System Kit') prefix = 'EAR';
-    else if(cat === 'Rack Accessories') prefix = 'RAK';
-    else if(cat === 'Generic Items') prefix = 'GEN';
-    else if(cat === 'Package') prefix = 'PKG';
-    else if(cat === 'Fixed Assets') prefix = 'FIX';
+    const prefix = getCategoryPrefix(cat);
     
     // MODIFIED: Include Brand Code for better filtering (e.g. SOL-JIN-001)
     let baseCode = prefix;
@@ -3780,13 +3776,18 @@ window.exportFinanceData = () => {
 // --- IMPORT / EXPORT LOGIC ---
 
 window.exportInventoryCSV = () => {
-    if(inventory.length === 0) return alert("No data to export.");
+    // Filter based on current active tab
+    let itemsToExport = inventory;
+    if (currentCategoryFilter !== 'All') {
+        itemsToExport = inventory.filter(i => i.category === currentCategoryFilter);
+    }
+    if(itemsToExport.length === 0) return alert(`No data to export for category: ${currentCategoryFilter}`);
     
     // Define Columns
     const cols = ['itemCode', 'category', 'brand', 'model', 'spec', 'unit', 'balance', 'costPrice', 'sellingPrice', 'remark'];
     let csvContent = cols.join(",") + "\n";
 
-    inventory.forEach(item => {
+    itemsToExport.forEach(item => {
         const row = cols.map(col => {
             let val = item[col] === undefined || item[col] === null ? '' : item[col];
             // Escape quotes and handle commas
@@ -3801,7 +3802,8 @@ window.exportInventoryCSV = () => {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", `inventory_full_export_${new Date().toISOString().slice(0,10)}.csv`);
+    const filename = currentCategoryFilter === 'All' ? 'inventory_full_export' : `inventory_${currentCategoryFilter.replace(/\s/g,'_')}_export`;
+    link.setAttribute("download", `${filename}_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -3809,13 +3811,18 @@ window.exportInventoryCSV = () => {
 
 window.processCSVImport = async () => {
     const input = document.getElementById('csvImportInput').value.trim();
+    const selectedCat = document.getElementById('importCategorySelect').value;
+
     if (!input) return alert("Please paste CSV data first.");
 
     const lines = input.split('\n');
     if (lines.length < 2) return alert("Invalid CSV format or empty data.");
 
     const headers = lines[0].split(',').map(h => h.trim());
-    if(!headers.includes('itemCode')) return alert("Error: CSV must have an 'itemCode' column.");
+    // Relaxed check: itemCode is optional if Category/Brand is present to generate it
+    if(!headers.includes('itemCode') && !headers.includes('brand')) {
+        return alert("Error: CSV must have either 'itemCode' OR 'brand' (for auto-generation).");
+    }
 
     if(!confirm(`Ready to import ${lines.length - 1} rows? Existing items with matching codes will be UPDATED.`)) return;
 
@@ -3823,6 +3830,9 @@ window.processCSVImport = async () => {
     const batch = writeBatch(db);
     let count = 0;
     let batchCount = 0;
+    
+    // Cache for sequence generation
+    const sequenceMap = {};
 
     for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
@@ -3840,6 +3850,39 @@ window.processCSVImport = async () => {
             if (val !== undefined) data[h] = val;
         });
 
+        // Apply Selected Category if CSV doesn't specify one
+        if (selectedCat && !data.category) data.category = selectedCat;
+
+        // AUTO-GENERATE CODE if missing
+        if (!data.itemCode) {
+            if (!data.category) {
+                console.warn(`Skipping row ${i}: Missing Category for code generation.`);
+                continue;
+            }
+            
+            const prefix = getCategoryPrefix(data.category);
+            const brand = data.brand || 'GEN';
+            const brandCode = brand.replace(/[^a-zA-Z0-9]/g, '').substring(0,3).toUpperCase();
+            
+            let base = `${prefix}-${brandCode}-`;
+            
+            // Initialize sequence for this prefix if not done
+            if (sequenceMap[base] === undefined) {
+                let max = 0;
+                inventory.forEach(inv => {
+                    if(inv.itemCode && inv.itemCode.startsWith(base)) {
+                        const parts = inv.itemCode.split('-');
+                        const num = parseInt(parts[parts.length-1]);
+                        if(!isNaN(num) && num > max) max = num;
+                    }
+                });
+                sequenceMap[base] = max;
+            }
+            
+            sequenceMap[base]++;
+            data.itemCode = base + String(sequenceMap[base]).padStart(3, '0');
+        }
+
         if (data.itemCode) {
             const existing = inventory.find(inv => inv.itemCode === data.itemCode);
             const ref = existing ? doc(db, "inventory", existing.id) : doc(collection(db, "inventory"));
@@ -3856,27 +3899,37 @@ window.processCSVImport = async () => {
             if (batchCount >= 450) {
                 await batch.commit();
                 batchCount = 0;
+                batch = writeBatch(db); // Reset batch
             }
         }
     }
 
     if (batchCount > 0) await batch.commit();
     
-    toggleLoading(false);
-    alert(`Import Complete! Processed  items.`);
+    alert(`Import Complete! Processed ${count} items.`);
     bootstrap.Modal.getInstance(document.getElementById('groundStockModal')).hide();
     loadInventory(true); // Reload data
+    toggleLoading(false);
 }
 
 window.downloadCsvTemplate = () => {
-    const headers = "itemCode,category,brand,model,balance,unit,costPrice,sellingPrice,remark";
-    const example = "SOL-ABC-001,Solar,Jinko,Tiger Pro,100,Pcs,150.00,180.00,Initial Import";
+    const cat = document.getElementById('importCategorySelect').value;
+    
+    // If category selected, we can omit itemCode in template to imply auto-generation
+    let headers = "itemCode,category,brand,model,balance,unit,costPrice,sellingPrice,remark";
+    let example = "SOL-JIN-001,Solar,Jinko,Tiger Pro,100,Pcs,150.00,180.00,Initial Import";
+    
+    if(cat) {
+        headers = "brand,model,balance,unit,costPrice,sellingPrice,remark";
+        example = `Jinko,Tiger Pro,100,Pcs,150,180,Auto-Code-Gen for ${cat}`;
+    }
+
     const csvContent = headers + "\n" + example;
     
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "inventory_import_template.csv";
+    link.download = cat ? `template_${cat}.csv` : "inventory_import_template.csv";
     link.click();
 }
 
@@ -4612,6 +4665,245 @@ function renderProjectTimeline(projectsData, filter) {
         const start = new Date(p.minDate);
         const end = new Date(p.maxDate);
         
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = p.active > 0 ? '#0d6efd' : '#198754'; // Blue for active, Green for completed
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass};" title="${name}: ${p.minDate} to ${p.maxDate}">
+                    ${name} (${p.active} Active Jobs)
+                </div>
+            </div>`;
+    });
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
+}
+
+window.exportProjectDashboardCSV = async () => {
+    toggleLoading(true);
+    // Re-fetch to ensure fresh data for export
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    const projects = {};
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: job.date, maxDate: job.endDate||job.date };
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+        if(job.assignedStaff) (Array.isArray(job.assignedStaff) ? job.assignedStaff : [job.assignedStaff]).forEach(s => projects[name].staff.add(s));
+        if(job.date < projects[name].minDate) projects[name].minDate = job.date;
+        if((job.endDate||job.date) > projects[name].maxDate) projects[name].maxDate = (job.endDate||job.date);
+    });
+
+    let csv = ["Project Name,Active Jobs,Completed Jobs,Total Jobs,Progress %,Staff Count,Start Date,End Date"];
+    Object.keys(projects).forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        csv.push(`"${name}",${p.active},${p.completed},${p.total},${pct}%,${p.staff.size},${p.minDate},${p.maxDate}`);
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    toggleLoading(false);
+}
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = p.active > 0 ? '#0d6efd' : '#198754'; // Blue for active, Green for completed
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass};" title="${name}: ${p.minDate} to ${p.maxDate}">
+                    ${name} (${p.active} Active Jobs)
+                </div>
+            </div>`;
+    });
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
+}
+
+window.exportProjectDashboardCSV = async () => {
+    toggleLoading(true);
+    // Re-fetch to ensure fresh data for export
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    const projects = {};
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: job.date, maxDate: job.endDate||job.date };
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+        if(job.assignedStaff) (Array.isArray(job.assignedStaff) ? job.assignedStaff : [job.assignedStaff]).forEach(s => projects[name].staff.add(s));
+        if(job.date < projects[name].minDate) projects[name].minDate = job.date;
+        if((job.endDate||job.date) > projects[name].maxDate) projects[name].maxDate = (job.endDate||job.date);
+    });
+
+    let csv = ["Project Name,Active Jobs,Completed Jobs,Total Jobs,Progress %,Staff Count,Start Date,End Date"];
+    Object.keys(projects).forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        csv.push(`"${name}",${p.active},${p.completed},${p.total},${pct}%,${p.staff.size},${p.minDate},${p.maxDate}`);
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    toggleLoading(false);
+}
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = p.active > 0 ? '#0d6efd' : '#198754'; // Blue for active, Green for completed
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass};" title="${name}: ${p.minDate} to ${p.maxDate}">
+                    ${name} (${p.active} Active Jobs)
+                </div>
+            </div>`;
+    });
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
+}
+
+window.exportProjectDashboardCSV = async () => {
+    toggleLoading(true);
+    // Re-fetch to ensure fresh data for export
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    const projects = {};
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: job.date, maxDate: job.endDate||job.date };
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+        if(job.assignedStaff) (Array.isArray(job.assignedStaff) ? job.assignedStaff : [job.assignedStaff]).forEach(s => projects[name].staff.add(s));
+        if(job.date < projects[name].minDate) projects[name].minDate = job.date;
+        if((job.endDate||job.date) > projects[name].maxDate) projects[name].maxDate = (job.endDate||job.date);
+    });
+
+    let csv = ["Project Name,Active Jobs,Completed Jobs,Total Jobs,Progress %,Staff Count,Start Date,End Date"];
+    Object.keys(projects).forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        csv.push(`"${name}",${p.active},${p.completed},${p.total},${pct}%,${p.staff.size},${p.minDate},${p.maxDate}`);
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    toggleLoading(false);
+}
+    }
+
+    // Buffer
+    minDate.setDate(minDate.getDate() - 5);
+    maxDate.setDate(maxDate.getDate() + 15);
+
+    const dayWidth = 40; // px
+    const totalDays = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+    
+    // Build Header
+    let headerHtml = '<div class="gantt-wrapper"><div class="gantt-header">';
+    for(let i=0; i<=totalDays; i++) {
+        const d = new Date(minDate); d.setDate(minDate.getDate() + i);
+        const dayNum = d.getDate();
+        const dayName = d.toLocaleDateString('en-US', {weekday: 'narrow'});
+        headerHtml += `<div class="gantt-header-cell">${dayNum}<br><span style="font-weight:normal;opacity:0.7">${dayName}</span></div>`;
+    }
+    headerHtml += '</div><div class="gantt-body">';
+
+    // Build Rows
+    projectNames.forEach(name => {
+        const p = projectsData[name];
+        if(!p.minDate || !p.maxDate) return;
+
+        const start = new Date(p.minDate);
+        const end = new Date(p.maxDate);
+        
+        const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
+        const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
+        
+        const left = offsetDays * dayWidth;
+        const width = durationDays * dayWidth;
+        
+        const colorClass = p.active > 0 ? '#0d6efd' : '#198754'; // Blue for active, Green for completed
+
+        headerHtml += `
+            <div class="gantt-row">
+                <div class="gantt-grid-lines">${Array(totalDays+1).fill(`<div class="gantt-grid-line"></div>`).join('')}</div>
+                <div class="gantt-bar" style="left: ${left}px; width: ${width}px; background-color: ${colorClass};" title="${name}: ${p.minDate} to ${p.maxDate}">
+                    ${name} (${p.active} Active Jobs)
+                </div>
+            </div>`;
+    });
+
+    headerHtml += '</div></div>';
+    container.innerHTML = headerHtml;
+}
+
+window.exportProjectDashboardCSV = async () => {
+    toggleLoading(true);
+    // Re-fetch to ensure fresh data for export
+    const q = query(collection(db, "job_orders"));
+    const snap = await getDocs(q);
+    const projects = {};
+    snap.forEach(d => {
+        const job = d.data();
+        const name = job.customer || 'Unknown';
+        if(!projects[name]) projects[name] = { total: 0, completed: 0, active: 0, staff: new Set(), minDate: job.date, maxDate: job.endDate||job.date };
+        projects[name].total++;
+        if(job.status === 'Completed') projects[name].completed++;
+        else if(job.status !== 'Cancelled') projects[name].active++;
+        if(job.assignedStaff) (Array.isArray(job.assignedStaff) ? job.assignedStaff : [job.assignedStaff]).forEach(s => projects[name].staff.add(s));
+        if(job.date < projects[name].minDate) projects[name].minDate = job.date;
+        if((job.endDate||job.date) > projects[name].maxDate) projects[name].maxDate = (job.endDate||job.date);
+    });
+
+    let csv = ["Project Name,Active Jobs,Completed Jobs,Total Jobs,Progress %,Staff Count,Start Date,End Date"];
+    Object.keys(projects).forEach(name => {
+        const p = projects[name];
+        const pct = p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
+        csv.push(`"${name}",${p.active},${p.completed},${p.total},${pct}%,${p.staff.size},${p.minDate},${p.maxDate}`);
+    });
+
+    const blob = new Blob([csv.join("\n")], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+    toggleLoading(false);
+}
         const offsetDays = (start - minDate) / (1000 * 60 * 60 * 24);
         const durationDays = Math.max(1, (end - start) / (1000 * 60 * 60 * 24) + 1);
         
