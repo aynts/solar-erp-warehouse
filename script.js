@@ -3858,6 +3858,8 @@ window.processCSVImport = async () => {
         // Basic CSV parsing
         const values = lines[i].split(',').map(v => v.trim());
         const data = {};
+        const specs = {};
+        const specList = [];
         
         headers.forEach((h, index) => {
             let val = values[index];
@@ -3865,8 +3867,21 @@ window.processCSVImport = async () => {
                 val = parseFloat(val);
                 if (isNaN(val)) val = 0;
             }
-            if (val !== undefined) data[h] = val;
+            
+            if (val !== undefined) {
+                if (h.startsWith('spec_')) {
+                    specs[h] = val;
+                    if(val) specList.push(val);
+                } else {
+                    data[h] = val;
+                }
+            }
         });
+
+        if (Object.keys(specs).length > 0) {
+            data.specs = specs;
+            data.spec = specList.join(', ');
+        }
 
         // Apply Selected Category if CSV doesn't specify one
         if (selectedCat && !data.category) data.category = selectedCat;
@@ -3932,22 +3947,30 @@ window.processCSVImport = async () => {
 
 window.downloadCsvTemplate = () => {
     const cat = document.getElementById('importCategorySelect').value;
-    
-    // If category selected, we can omit itemCode in template to imply auto-generation
-    let headers = "itemCode,category,brand,model,balance,unit,costPrice,sellingPrice,remark";
-    let example = "SOL-JIN-001,Solar,Jinko,Tiger Pro,100,Pcs,150.00,180.00,Initial Import";
+    let headers = ['itemCode', 'category', 'brand', 'model', 'balance', 'unit', 'costPrice', 'sellingPrice', 'remark'];
+    let example = ['SOL-JIN-001', 'Solar', 'Jinko', 'Tiger Pro', '100', 'Pcs', '150', '180', 'Initial Import'];
     
     if(cat) {
-        headers = "brand,model,balance,unit,costPrice,sellingPrice,remark";
-        example = `Jinko,Tiger Pro,100,Pcs,150,180,Auto-Code-Gen for ${cat}`;
+        // If category selected, we can omit itemCode in template to imply auto-generation
+        headers = ['brand', 'model', 'balance', 'unit', 'costPrice', 'sellingPrice', 'remark'];
+        example = ['Jinko', 'Tiger Pro', '100', 'Pcs', '150', '180', `Auto-Code-Gen for ${cat}`];
+        
+        const fields = categoryFieldConfig[cat] || categoryFieldConfig['default'];
+        fields.forEach(f => {
+            headers.push(f.id);
+            example.push(f.placeholder.replace('e.g. ', ''));
+        });
+    } else {
+        headers.push('spec_detail');
+        example.push('General Spec');
     }
 
-    const csvContent = headers + "\n" + example;
+    const csvContent = headers.join(",") + "\n" + example.join(",");
     
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = cat ? `template_${cat}.csv` : "inventory_import_template.csv";
+    link.download = cat ? `template_${cat.replace(/\s/g,'_')}.csv` : "inventory_import_template.csv";
     link.click();
 }
 
