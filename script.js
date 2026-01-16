@@ -144,6 +144,7 @@ async function initApp() {
             window.generateStockMovementReport = generateStockMovementReport;
             window.openJobCostReport = openJobCostReport;
             window.openStaffReport = openStaffReport;
+            window.backupDatabase = backupDatabase;
             window.printVoucherLabels = printVoucherLabels;
             window.autoFillJobDetails = autoFillJobDetails;
             window.toggleJobView = toggleJobView;
@@ -648,7 +649,14 @@ function generateNextCode() {
     else if(cat === 'Package') prefix = 'PKG';
     else if(cat === 'Fixed Assets') prefix = 'FIX';
     
-    const baseCode = prefix + '-';
+    // MODIFIED: Include Brand Code for better filtering (e.g. SOL-JIN-001)
+    let baseCode = prefix;
+    if(brandInput && brandInput.trim()) {
+        const brandCode = brandInput.trim().replace(/[^a-zA-Z0-9]/g, '').substring(0,3).toUpperCase();
+        if(brandCode) baseCode += '-' + brandCode;
+    }
+    baseCode += '-';
+
     let maxNum = 0;
     inventory.forEach(i => {
         if(i.itemCode && i.itemCode.startsWith(baseCode)) {
@@ -661,8 +669,8 @@ function generateNextCode() {
         }
     });
     
-    const nextNum = String(maxNum + 1).padStart(4, '0');
-    const finalCode = `${prefix}-${nextNum}`;
+    const nextNum = String(maxNum + 1).padStart(3, '0');
+    const finalCode = baseCode + nextNum;
     document.getElementById('itemCode').value = finalCode;
     
     // Auto-generate QR for preview
@@ -4014,6 +4022,43 @@ window.changeUserRole = async (uid, newRole) => {
     await updateDoc(doc(db, "users", uid), { role: newRole });
     alert("Role Updated!");
     loadUsers();
+}
+
+// --- BACKUP DATABASE ---
+window.backupDatabase = async () => {
+    if(currentUserRole !== 'superadmin' && currentUserRole !== 'admin') return alert("Access Denied: Admin privileges required.");
+    
+    toggleLoading(true);
+    try {
+        const collectionsToBackup = ["inventory", "users", "parties", "vouchers", "transactions", "job_orders", "project_status"];
+        const backupData = {};
+
+        for (const colName of collectionsToBackup) {
+            const q = query(collection(db, colName));
+            const snap = await getDocs(q);
+            backupData[colName] = [];
+            snap.forEach(doc => {
+                // Convert Firestore Timestamps to ISO strings for better JSON readability if needed, 
+                // but keeping raw data is safer for potential restore scripts.
+                backupData[colName].push({ id: doc.id, ...doc.data() });
+            });
+        }
+
+        const jsonString = JSON.stringify(backupData, null, 2);
+        const blob = new Blob([jsonString], { type: "application/json" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `solar_erp_backup_${new Date().toISOString().slice(0,10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        alert("Backup downloaded successfully!");
+    } catch(e) {
+        console.error(e);
+        alert("Backup failed: " + e.message);
+    }
+    toggleLoading(false);
 }
 
 // --- CLEAR DATABASE (SUPER ADMIN ONLY) ---

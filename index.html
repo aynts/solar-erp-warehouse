@@ -1198,6 +1198,9 @@
                         <button class="btn btn-warning btn-sm shadow-sm auth-superadmin-only hidden me-2" onclick="generateDemoData()">
                             <i class="fas fa-magic me-1"></i> Generate Demo Data
                         </button>
+                        <button class="btn btn-success btn-sm shadow-sm auth-admin-only hidden me-2" onclick="backupDatabase()">
+                            <i class="fas fa-database me-1"></i> Backup Data
+                        </button>
                         <button class="btn btn-danger btn-sm shadow-sm auth-superadmin-only hidden" onclick="clearDatabase()">
                             <i class="fas fa-trash-alt me-1"></i> Reset System
                         </button>
@@ -1395,7 +1398,7 @@
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-bold text-secondary">BRAND</label>
-                        <input type="text" id="itemBrand" class="form-control" list="brandSuggestions" onchange="generateNextCode()" placeholder="e.g. Jinko">
+                        <input type="text" id="itemBrand" class="form-control" list="brandSuggestions" oninput="generateNextCode()" placeholder="e.g. Jinko">
                         <datalist id="brandSuggestions">
                             <option value="Jinko">
                             <option value="Trina">
