@@ -22,6 +22,7 @@ let systemUsers = [];
 let currentCategoryFilter = 'All';
 let isInventoryLoaded = false; // CACHE FLAG
 let currentCalendarDate = new Date(); // For Calendar
+let isTransactionProcessing = false; // Prevent double entry
 
 // --- DYNAMIC FIELD CONFIGURATION ---
 const categoryFieldConfig = {
@@ -84,7 +85,357 @@ const categoryFieldConfig = {
     ],
     // Default fallback
     'default': [
-        { id: 'spec_detail', label: 'Specification', placeholder: 'General Spec' }
+        { id: 'spec_detail', label<<<<
+            bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
+            loadVouchers();
+            // Don't call loadInventory/loadDashboard. We updated memory locally.
+            filterInventory(); // Refresh table view from memory
+            
+            alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+        }
+        ====
+            bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
+            loadVouchers();
+            // Don't call loadInventory/loadDashboard. We updated memory locally.
+            filterInventory(); // Refresh table view from memory
+            
+            toggleLoading(false);
+            alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+        }
+        >>>>
+        <<<<
+            bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
+            loadVouchers();
+            // Don't call loadInventory/loadDashboard. We updated memory locally.
+            filterInventory(); // Refresh table view from memory
+            
+            alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+        }
+        ====
+            bootstrap.Modal.getInstance(document.getElementById('voucherModal')).hide();
+            loadVouchers();
+            // Don't call loadInventory/loadDashboard. We updated memory locally.
+            filterInventory(); // Refresh table view from memory
+            
+            toggleLoading(false);
+            alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+        }
+        >>>>
+        <<<<
+        window.saveVoucher = async (autoProcess = false) => {
+            const type = document.getElementById('voucherType').value;
+            const party = document.getElementById('voucherParty').value;
+            const date = document.getElementById('voucherDate').value;
+            const ref = document.getElementById('voucherLetterRef')?.value || '';
+            const relatedPoId = document.getElementById('relatedPoId').value;
+            const relatedPrId = document.getElementById('relatedPrId').value;
+            
+            // --- PROJECT VALIDATION: Check if Project is Completed (for Requests) ---
+            if (type === 'request') {
+                toggleLoading(true);
+                const qJob = query(collection(db, "job_orders"), where("customer", "==", party), where("status", "==", "Completed"));
+                const jobSnap = await getDocs(qJob);
+                toggleLoading(false);
+                if (!jobSnap.empty) {
+                    if(!confirm(`PROJECT WARNING:\n\nThe project "${party}" is marked as COMPLETED.\n\nDo you really want to issue more stock?`)) return;
+                }
+            }
+        
+            const rows = document.querySelectorAll('#voucherItemsBody tr');
+            let items = [];
+            for(let row of rows) {
+                const code = row.querySelector('.item-search').value;
+                const qtyInput = row.querySelector('.qty-input');
+                const serialInput = row.querySelector('.serial-input');
+                const priceInput = row.querySelector('.price-input');
+                const qty = parseInt(qtyInput.value);
+                
+                // Negative Check
+                if(qty <= 0 || isNaN(qty)) {
+                    qtyInput.style.border = "1px solid red";
+                    return alert("Quantity must be a positive number.");
+                }
+        
+                const item = inventory.find(i => i.itemCode === code);
+                
+                if(item && qty > 0) {
+                    items.push({ 
+                        itemId: item.id, 
+                        itemCode: item.itemCode, 
+                        itemName: `${item.brand} ${item.model}`,
+                        qty: qty, 
+                        serials: serialInput ? serialInput.value.trim() : '',
+                        estPrice: priceInput ? parseFloat(priceInput.value) : 0
+                    });
+                } else if (type === 'purchase_request' && code && qty > 0) {
+                    // Allow Non-Inventory Items for PR
+                    items.push({
+                        itemId: null,
+                        itemCode: code,
+                        itemName: code + " (Non-Inventory)",
+                        qty: qty,
+                        serials: '',
+                        estPrice: priceInput ? parseFloat(priceInput.value) : 0
+                    });
+                }
+            }
+        
+            if(items.length === 0) return alert("No valid items selected");
+        
+            // --- PO VALIDATION LOGIC ---
+            const retBy = document.getElementById('voucherRetBy')?.value;
+            const recBy = document.getElementById('voucherRecBy')?.value;
+            if ((type === 'return' || type === 'damage_return') && retBy && recBy && retBy === recBy) {
+                return alert("Returned By and Received By cannot be the same person.");
+            }
+            
+            // --- RETURN VALIDATION: Check if project actually has these items ---
+            if (type === 'return' || type === 'damage_return') {
+                toggleLoading(true);
+                const q = query(collection(db, "transactions"), where("party", "==", party));
+                const snap = await getDocs(q);
+                const usageMap = {};
+                snap.forEach(d => {
+                    const t = d.data();
+                    if (!t.itemId) return;
+                    const invItem = inventory.find(i => i.id === t.itemId);
+                    const code = invItem ? invItem.itemCode : 'UNKNOWN';
+                    if (!usageMap[code]) usageMap[code] = 0;
+                    if (t.type === 'out') usageMap[code] += t.qty;
+                    if (t.type === 'in') usageMap[code] -= t.qty;
+                });
+                
+                for(let item of items) {
+                    const siteBal = usageMap[item.itemCode] || 0;
+                    if (item.qty > siteBal) {
+                        toggleLoading(false);
+                        return alert(`Invalid Return! Project '' only has  of ${item.itemCode}. You tried to return ${item.qty}.`);
+                    }
+                }
+                toggleLoading(false);
+            }
+        
+            if(relatedPoId && type === 'receipt') {
+                toggleLoading(true);
+                try {
+                    const poDoc = await getDoc(doc(db, "vouchers", relatedPoId));
+                    const po = poDoc.data();
+                    
+                    // Get history
+                    const q = query(collection(db, "vouchers"), where("relatedPoId", "==", relatedPoId), where("type", "==", "receipt"));
+                    const snap = await getDocs(q);
+                    let receivedMap = {};
+                    snap.forEach(d => {
+                        d.data().items.forEach(i => { receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty; });
+                    });
+        
+                    // Check Limits
+                    for(let newItem of items) {
+                        const orderedItem = po.items.find(pi => pi.itemCode === newItem.itemCode);
+                        if(orderedItem) {
+                            const alreadyReceived = receivedMap[newItem.itemCode] || 0;
+                            const allowed = orderedItem.qty - alreadyReceived;
+                            
+                            if(newItem.qty > allowed) {
+                                toggleLoading(false);
+                                return alert(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nReceived: \nRemaining Allowed: \nYou tried to add: ${newItem.qty}`);
+                            }
+                        }
+                    }
+                } catch(e) {
+                    console.error("PO Validation Error", e);
+                    toggleLoading(false);
+                    return alert("Error validating PO limit. Check console.");
+                }
+                toggleLoading(false);
+            }
+            // ---------------------------
+        
+            let status = 'draft';
+        ====
+        window.saveVoucher = async (autoProcess = false) => {
+            toggleLoading(true);
+            const type = document.getElementById('voucherType').value;
+            const party = document.getElementById('voucherParty').value;
+            const date = document.getElementById('voucherDate').value;
+            const ref = document.getElementById('voucherLetterRef')?.value || '';
+            const relatedPoId = document.getElementById('relatedPoId').value;
+            const relatedPrId = document.getElementById('relatedPrId').value;
+            
+            // --- PROJECT VALIDATION: Check if Project is Completed (for Requests) ---
+            if (type === 'request') {
+                const qJob = query(collection(db, "job_orders"), where("customer", "==", party), where("status", "==", "Completed"));
+                const jobSnap = await getDocs(qJob);
+                if (!jobSnap.empty) {
+                    if(!confirm(`PROJECT WARNING:\n\nThe project "" is marked as COMPLETED.\n\nDo you really want to issue more stock?`)) {
+                        toggleLoading(false); return;
+                    }
+                }
+            }
+        
+            const rows = document.querySelectorAll('#voucherItemsBody tr');
+            let items = [];
+            for(let row of rows) {
+                const code = row.querySelector('.item-search').value;
+                const qtyInput = row.querySelector('.qty-input');
+                const serialInput = row.querySelector('.serial-input');
+                const priceInput = row.querySelector('.price-input');
+                const qty = parseInt(qtyInput.value);
+                
+                // Negative Check
+                if(qty <= 0 || isNaN(qty)) {
+                    qtyInput.style.border = "1px solid red";
+                    toggleLoading(false);
+                    return alert("Quantity must be a positive number.");
+                }
+        
+                const item = inventory.find(i => i.itemCode === code);
+                
+                if(item && qty > 0) {
+                    items.push({ 
+                        itemId: item.id, 
+                        itemCode: item.itemCode, 
+                        itemName: `${item.brand} ${item.model}`,
+                        qty: qty, 
+                        serials: serialInput ? serialInput.value.trim() : '',
+                        estPrice: priceInput ? parseFloat(priceInput.value) : 0
+                    });
+                } else if (type === 'purchase_request' && code && qty > 0) {
+                    // Allow Non-Inventory Items for PR
+                    items.push({
+                        itemId: null,
+                        itemCode: code,
+                        itemName: code + " (Non-Inventory)",
+                        qty: qty,
+                        serials: '',
+                        estPrice: priceInput ? parseFloat(priceInput.value) : 0
+                    });
+                }
+            }
+        
+            if(items.length === 0) { toggleLoading(false); return alert("No valid items selected"); }
+        
+            // --- PO VALIDATION LOGIC ---
+            const retBy = document.getElementById('voucherRetBy')?.value;
+            const recBy = document.getElementById('voucherRecBy')?.value;
+            if ((type === 'return' || type === 'damage_return') && retBy && recBy && retBy === recBy) {
+                toggleLoading(false);
+                return alert("Returned By and Received By cannot be the same person.");
+            }
+            
+            // --- RETURN VALIDATION: Check if project actually has these items ---
+            if (type === 'return' || type === 'damage_return') {
+                const q = query(collection(db, "transactions"), where("party", "==", party));
+                const snap = await getDocs(q);
+                const usageMap = {};
+                snap.forEach(d => {
+                    const t = d.data();
+                    if (!t.itemId) return;
+                    const invItem = inventory.find(i => i.id === t.itemId);
+                    const code = invItem ? invItem.itemCode : 'UNKNOWN';
+                    if (!usageMap[code]) usageMap[code] = 0;
+                    if (t.type === 'out') usageMap[code] += t.qty;
+                    if (t.type === 'in') usageMap[code] -= t.qty;
+                });
+                
+                for(let item of items) {
+                    const siteBal = usageMap[item.itemCode] || 0;
+                    if (item.qty > siteBal) {
+                        toggleLoading(false);
+                        return alert(`Invalid Return! Project '' only has  of ${item.itemCode}. You tried to return ${item.qty}.`);
+                    }
+                }
+            }
+        
+            if(relatedPoId && type === 'receipt') {
+                try {
+                    const poDoc = await getDoc(doc(db, "vouchers", relatedPoId));
+                    const po = poDoc.data();
+                    
+                    // Get history
+                    const q = query(collection(db, "vouchers"), where("relatedPoId", "==", relatedPoId), where("type", "==", "receipt"));
+                    const snap = await getDocs(q);
+                    let receivedMap = {};
+                    snap.forEach(d => {
+                        d.data().items.forEach(i => { receivedMap[i.itemCode] = (receivedMap[i.itemCode] || 0) + i.qty; });
+                    });
+        
+                    // Check Limits
+                    for(let newItem of items) {
+                        const orderedItem = po.items.find(pi => pi.itemCode === newItem.itemCode);
+                        if(orderedItem) {
+                            const alreadyReceived = receivedMap[newItem.itemCode] || 0;
+                            const allowed = orderedItem.qty - alreadyReceived;
+                            
+                            if(newItem.qty > allowed) {
+                                toggleLoading(false);
+                                return alert(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nReceived: \nRemaining Allowed: \nYou tried to add: ${newItem.qty}`);
+                            }
+                        }
+                    }
+                } catch(e) {
+                    console.error("PO Validation Error", e);
+                    toggleLoading(false);
+                    return alert("Error validating PO limit. Check console.");
+                }
+            }
+        
+            // NEW: Duplicate Ref Check
+            if(ref) {
+                const qRef = query(collection(db, "vouchers"), where("ref", "==", ref));
+                const snapRef = await getDocs(qRef);
+                if(!snapRef.empty) {
+            throw new Error("Duplicate Reference Number! This Ref already exists.");
+                }
+            }
+            // ---------------------------
+        
+            let status = 'draft';
+        >>>>
+        <<<<
+            bootstrap.Modal.getInstance(document.getElementById('itemModal')).hide();
+            // Do NOT call loadInventory() here, just filter
+            filterInventory();
+        }
+        ====
+            bootstrap.Modal.getInstance(document.getElementById('itemModal')).hide();
+            // Do NOT call loadInventory() here, just filter
+            filterInventory();
+            toggleLoading(false);
+        }
+        >>>>
+        <<<<
+        window.saveItem = async () => {
+            const id = document.getElementById('itemId').value;
+            const itemCode = document.getElementById('itemCode').value.trim();
+            
+            if (!itemCode) return alert("Item Code is required");
+        
+            // Unique Check
+            const duplicate = inventory.find(i => i.itemCode === itemCode && i.id !== id);
+            if(duplicate) {
+                return alert(`Duplicate Item Code detected!\nCode: ${itemCode}\nExisting Item: ${duplicate.brand} ${duplicate.model}`);
+            }
+        
+            const category = document.getElementById('itemCategory').value;
+        ====
+        window.saveItem = async () => {
+            toggleLoading(true);
+            const id = document.getElementById('itemId').value;
+            const itemCode = document.getElementById('itemCode').value.trim();
+            
+            if (!itemCode) { toggleLoading(false); return alert("Item Code is required"); }
+        
+            // Unique Check
+            const duplicate = inventory.find(i => i.itemCode === itemCode && i.id !== id);
+            if(duplicate) {
+                toggleLoading(false);
+                return alert(`Duplicate Item Code detected!\nCode: \nExisting Item: ${duplicate.brand} ${duplicate.model}`);
+            }
+        
+            const category = document.getElementById('itemCategory').value;
+        >>>>
+        : 'Specification', placeholder: 'General Spec' }
     ]
 };
 
@@ -562,12 +913,16 @@ window.saveCustomer = async () => {
 }
 
 async function processPartySave(id, name, contact, address, type, modalId) {
-    if(!name) return alert("Name is required");
+    if(isTransactionProcessing) return;
+    isTransactionProcessing = true;
+    toggleLoading(true);
+    try {
+    if(!name) throw new Error("Name is required");
 
     // Check for duplicates (Case-insensitive, excluding current ID if editing)
     const duplicate = parties.find(p => p.name.toLowerCase() === name.toLowerCase() && p.id !== id);
     if (duplicate) {
-        return alert(`Error: A ${duplicate.type} named "${duplicate.name}" already exists.`);
+        throw new Error(`Error: A ${duplicate.type} named "${duplicate.name}" already exists.`);
     }
 
     const data = { name, contact, address, type };
@@ -579,8 +934,10 @@ async function processPartySave(id, name, contact, address, type, modalId) {
         await addDoc(collection(db, "parties"), { ...data, createdAt: serverTimestamp() });
     }
     
-    bootstrap.Modal.getInstance(document.getElementById('partyModal')).hide();
-    bootstrap.Modal.getInstance(document.getElementById(modalId)).hide();
+    const partyModalEl = document.getElementById('partyModal');
+    if(partyModalEl) { try { bootstrap.Modal.getInstance(partyModalEl).hide(); } catch(e){} }
+    
+    try { bootstrap.Modal.getInstance(document.getElementById(modalId)).hide(); } catch(e){}
     await loadParties();
     loadPartiesView(type);
 
@@ -589,6 +946,13 @@ async function processPartySave(id, name, contact, address, type, modalId) {
     if(voucherModal && voucherModal.classList.contains('show')) {
         document.getElementById('voucherParty').value = name;
         handleVoucherPartyChange();
+    }
+    } catch(e) {
+        console.error(e);
+        alert(e.message);
+    } finally {
+        isTransactionProcessing = false;
+    toggleLoading(false);
     }
 }
 
@@ -1105,15 +1469,19 @@ window.openItemModal = (id=null) => {
 }
 
 window.saveItem = async () => {
+    if(isTransactionProcessing) return;
+    isTransactionProcessing = true;
+    toggleLoading(true);
+    try {
     const id = document.getElementById('itemId').value;
     const itemCode = document.getElementById('itemCode').value.trim();
     
-    if (!itemCode) return alert("Item Code is required");
+    if (!itemCode) throw new Error("Item Code is required");
 
     // Unique Check
     const duplicate = inventory.find(i => i.itemCode === itemCode && i.id !== id);
     if(duplicate) {
-        return alert(`Duplicate Item Code detected!\nCode: \nExisting Item: ${duplicate.brand} ${duplicate.model}`);
+        throw new Error(`Duplicate Item Code detected!\nCode: ${itemCode}\nExisting Item: ${duplicate.brand} ${duplicate.model}`);
     }
 
     const category = document.getElementById('itemCategory').value;
@@ -1164,6 +1532,13 @@ window.saveItem = async () => {
     bootstrap.Modal.getInstance(document.getElementById('itemModal')).hide();
     // Do NOT call loadInventory() here, just filter
     filterInventory();
+    } catch(e) {
+        console.error(e);
+        alert(e.message);
+    } finally {
+        isTransactionProcessing = false;
+    toggleLoading(false);
+    }
 }
 
 // --- SEED DUMMY DATA ---
@@ -1635,6 +2010,10 @@ window.handleVoucherPartyChange = async () => {
 }
 
 window.saveVoucher = async (autoProcess = false) => {
+    if(isTransactionProcessing) return;
+    isTransactionProcessing = true;
+    toggleLoading(true);
+    try {
     const type = document.getElementById('voucherType').value;
     const party = document.getElementById('voucherParty').value;
     const date = document.getElementById('voucherDate').value;
@@ -1644,12 +2023,10 @@ window.saveVoucher = async (autoProcess = false) => {
     
     // --- PROJECT VALIDATION: Check if Project is Completed (for Requests) ---
     if (type === 'request') {
-        toggleLoading(true);
         const qJob = query(collection(db, "job_orders"), where("customer", "==", party), where("status", "==", "Completed"));
         const jobSnap = await getDocs(qJob);
-        toggleLoading(false);
         if (!jobSnap.empty) {
-            if(!confirm(`PROJECT WARNING:\n\nThe project "${party}" is marked as COMPLETED.\n\nDo you really want to issue more stock?`)) return;
+            if(!confirm(`PROJECT WARNING:\n\nThe project "${party}" is marked as COMPLETED.\n\nDo you really want to issue more stock?`)) { return; }
         }
     }
 
@@ -1665,7 +2042,7 @@ window.saveVoucher = async (autoProcess = false) => {
         // Negative Check
         if(qty <= 0 || isNaN(qty)) {
             qtyInput.style.border = "1px solid red";
-            return alert("Quantity must be a positive number.");
+            throw new Error("Quantity must be a positive number.");
         }
 
         const item = inventory.find(i => i.itemCode === code);
@@ -1692,18 +2069,17 @@ window.saveVoucher = async (autoProcess = false) => {
         }
     }
 
-    if(items.length === 0) return alert("No valid items selected");
+    if(items.length === 0) { throw new Error("No valid items selected"); }
 
     // --- PO VALIDATION LOGIC ---
     const retBy = document.getElementById('voucherRetBy')?.value;
     const recBy = document.getElementById('voucherRecBy')?.value;
     if ((type === 'return' || type === 'damage_return') && retBy && recBy && retBy === recBy) {
-        return alert("Returned By and Received By cannot be the same person.");
+        throw new Error("Returned By and Received By cannot be the same person.");
     }
     
     // --- RETURN VALIDATION: Check if project actually has these items ---
     if (type === 'return' || type === 'damage_return') {
-        toggleLoading(true);
         const q = query(collection(db, "transactions"), where("party", "==", party));
         const snap = await getDocs(q);
         const usageMap = {};
@@ -1720,16 +2096,12 @@ window.saveVoucher = async (autoProcess = false) => {
         for(let item of items) {
             const siteBal = usageMap[item.itemCode] || 0;
             if (item.qty > siteBal) {
-                toggleLoading(false);
-                return alert(`Invalid Return! Project '' only has  of ${item.itemCode}. You tried to return ${item.qty}.`);
+                throw new Error(`Invalid Return! Project '${party}' only has ${siteBal} of ${item.itemCode}. You tried to return ${item.qty}.`);
             }
         }
-        toggleLoading(false);
     }
 
     if(relatedPoId && type === 'receipt') {
-        toggleLoading(true);
-        try {
             const poDoc = await getDoc(doc(db, "vouchers", relatedPoId));
             const po = poDoc.data();
             
@@ -1749,17 +2121,10 @@ window.saveVoucher = async (autoProcess = false) => {
                     const allowed = orderedItem.qty - alreadyReceived;
                     
                     if(newItem.qty > allowed) {
-                        toggleLoading(false);
-                        return alert(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nReceived: \nRemaining Allowed: \nYou tried to add: ${newItem.qty}`);
+                        throw new Error(`Cannot Receive! Item: ${newItem.itemCode}\nOrdered: ${orderedItem.qty}\nRemaining Allowed: ${allowed}\nYou tried to add: ${newItem.qty}`);
                     }
                 }
             }
-        } catch(e) {
-            console.error("PO Validation Error", e);
-            toggleLoading(false);
-            return alert("Error validating PO limit. Check console.");
-        }
-        toggleLoading(false);
     }
     // ---------------------------
 
@@ -1861,6 +2226,13 @@ window.saveVoucher = async (autoProcess = false) => {
     filterInventory(); // Refresh table view from memory
     
     alert(autoProcess ? "Transaction Processed Successfully!" : "Voucher Saved (Draft)");
+    } catch(e) {
+        console.error(e);
+        alert("Error: " + e.message);
+    } finally {
+        isTransactionProcessing = false;
+        toggleLoading(false);
+    }
 }
 
 // New Function: Receive PO (Convert to Receipt)
@@ -2279,7 +2651,12 @@ window.rejectVoucher = async (id) => {
 }
 
 window.approveVoucher = async (id, type) => {
+    if(isTransactionProcessing) return;
     if(!confirm("Confirm and process stock update?")) return;
+    
+    isTransactionProcessing = true;
+    toggleLoading(true);
+    try {
     const vRef = doc(db, "vouchers", id);
     const vSnap = await getDoc(vRef);
     const v = vSnap.data();
@@ -2333,6 +2710,13 @@ window.approveVoucher = async (id, type) => {
     loadVouchers();
     filterInventory(); // Update UI
     // loadProjectUsage(); // We can reload this lazily when view is clicked
+    } catch(e) {
+        console.error(e);
+        alert("Error approving voucher: " + e.message);
+    } finally {
+        isTransactionProcessing = false;
+        toggleLoading(false);
+    }
 }
 
 window.printVoucher = async (id) => {
@@ -2776,9 +3160,13 @@ window.autoFillJobDetails = () => {
 }
 
 window.saveJobOrder = async () => {
+    if(isTransactionProcessing) return;
+    isTransactionProcessing = true;
+    toggleLoading(true);
+    try {
     const id = document.getElementById('jobId').value;
     const customer = document.getElementById('jobCustomer').value;
-    if(!customer) return alert("Customer is required");
+    if(!customer) throw new Error("Customer is required");
 
     // Collect Staff
     const selectedStaff = [];
@@ -2803,7 +3191,7 @@ window.saveJobOrder = async () => {
         if (currentDoc.exists()) {
             const currentJob = currentDoc.data();
             if (currentJob.status === 'Completed' && data.status === 'Completed') {
-                return alert("This Job Order is Completed and locked. Please Re-open it first to make changes.");
+                throw new Error("This Job Order is Completed and locked. Please Re-open it first to make changes.");
             }
         }
         await updateDoc(doc(db, "job_orders", id), data);
@@ -2814,6 +3202,13 @@ window.saveJobOrder = async () => {
     bootstrap.Modal.getInstance(document.getElementById('jobOrderModal')).hide();
     loadJobOrders();
     renderCalendar(); // Refresh calendar
+    } catch(e) {
+        console.error(e);
+        alert(e.message);
+    } finally {
+        isTransactionProcessing = false;
+    toggleLoading(false);
+    }
 }
 
 window.updateJobStatus = async (id, status) => {
