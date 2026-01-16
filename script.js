@@ -83,6 +83,14 @@ const categoryFieldConfig = {
         { id: 'spec_mat', label: 'Material', placeholder: 'e.g. Copper' },
         { id: 'spec_dim', label: 'Dimension', placeholder: 'e.g. 1.5m Rod' }
     ],
+    'Rack Accessories': [
+        { id: 'spec_mat', label: 'Material', placeholder: 'e.g. Aluminum' },
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. Rail/Clamp' }
+    ],
+    'Generic Items': [
+        { id: 'spec_type', label: 'Type', placeholder: 'e.g. General' },
+        { id: 'spec_desc', label: 'Description', placeholder: 'e.g. Consumable' }
+    ],
     // Default fallback
     'default': [
         { id: 'spec_detail', label: 'Specification', placeholder: 'General Spec' }
@@ -646,6 +654,8 @@ function generateNextCode() {
     else if(cat === 'Breaker Box') prefix = 'BOX';
     else if(cat === 'Cables and Wiring Accessories') prefix = 'CAB';
     else if(cat === 'Earthing System Kit') prefix = 'EAR';
+    else if(cat === 'Rack Accessories') prefix = 'RAK';
+    else if(cat === 'Generic Items') prefix = 'GEN';
     else if(cat === 'Package') prefix = 'PKG';
     else if(cat === 'Fixed Assets') prefix = 'FIX';
     
