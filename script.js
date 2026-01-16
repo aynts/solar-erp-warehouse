@@ -167,6 +167,11 @@ async function initApp() {
             window.openJobFromUsage = openJobFromUsage;
             window.loadProjectDashboard = loadProjectDashboard;
             window.exportProjectDashboardCSV = exportProjectDashboardCSV;
+            window.handleFileUpload = handleFileUpload;
+            window.openAuditLogModal = openAuditLogModal;
+            window.exportAuditLogsCSV = exportAuditLogsCSV;
+            window.openFinanceAuditModal = openFinanceAuditModal;
+            window.runFinanceAudit = runFinanceAudit;
             
 
             // --- QR INTEGRATION ---
@@ -1198,6 +1203,25 @@ window.saveItem = async () => {
     };
 
     if(id) {
+        // AUDIT LOGGING (Price/Balance Changes)
+        const oldItem = inventory.find(i => i.id === id);
+        if(oldItem) {
+            const changes = [];
+            if(oldItem.costPrice !== data.costPrice) changes.push(`Cost: ${oldItem.costPrice} -> ${data.costPrice}`);
+            if(oldItem.sellingPrice !== data.sellingPrice) changes.push(`Price: ${oldItem.sellingPrice} -> ${data.sellingPrice}`);
+            if(oldItem.balance !== data.balance) changes.push(`Manual Bal: ${oldItem.balance} -> ${data.balance}`);
+
+            if(changes.length > 0) {
+                await addDoc(collection(db, "audit_logs"), {
+                    date: serverTimestamp(),
+                    itemId: id,
+                    itemCode: itemCode,
+                    itemName: `${data.brand} ${data.model}`,
+                    changes: changes,
+                    user: currentUser.email
+                });
+            }
+        }
         await updateDoc(doc(db, "inventory", id), data);
         // Local Update to save Read Quota
         const index = inventory.findIndex(i => i.id === id);
@@ -1318,6 +1342,18 @@ window.seedDatabase = async () => {
             cat: "Fixed Assets", brand: "Toyota", model: "Forklift", code: "FIX-TOY-001", 
             specStr: "Warehouse Lifter", 
             specs: {spec_detail: "3 Ton Capacity"} 
+        },
+        // 16. Rack Accessories
+        { 
+            cat: "Rack Accessories", brand: "Schletter", model: "Rail 4.2m", code: "RAK-SCH-001", 
+            specStr: "Aluminum, Roof Rail", 
+            specs: {spec_mat: "Aluminum", spec_type: "Roof Rail"} 
+        },
+        // 17. Generic Items
+        { 
+            cat: "Generic Items", brand: "3M", model: "Electrical Tape", code: "GEN-3M-001", 
+            specStr: "General, Vinyl Tape", 
+            specs: {spec_type: "General", spec_desc: "Vinyl Tape Black"} 
         }
     ];
 
@@ -1345,7 +1381,7 @@ window.seedDatabase = async () => {
     }
 
     toggleLoading(false);
-    alert(`Database seeded with  new example items for all categories.`);
+    alert(`Database seeded with new example items for all categories.`);
     bootstrap.Modal.getInstance(document.getElementById('groundStockModal')).hide();
     loadInventory(true);
 }
@@ -3848,6 +3884,17 @@ window.exportInventoryCSV = () => {
     document.body.removeChild(link);
 }
 
+window.handleFileUpload = (input) => {
+    const file = input.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        document.getElementById('csvImportInput').value = e.target.result;
+    };
+    reader.readAsText(file);
+}
+
 window.processCSVImport = async () => {
     const input = document.getElementById('csvImportInput').value.trim();
     const selectedCat = document.getElementById('importCategorySelect').value;
@@ -3857,7 +3904,28 @@ window.processCSVImport = async () => {
     const lines = input.split('\n');
     if (lines.length < 2) return alert("Invalid CSV format or empty data.");
 
-    const headers = lines[0].split(',').map(h => h.trim());
+    // Helper: Parse CSV Row handling quotes
+    const parseCSVRow = (text) => {
+        const result = [];
+        let cur = '';
+        let inQuote = false;
+        for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if (c === '"') { inQuote = !inQuote; cur += c; }
+            else if (c === ',' && !inQuote) { result.push(cur); cur = ''; }
+            else { cur += c; }
+        }
+        result.push(cur);
+        return result.map(val => {
+            val = val.trim();
+            if (val.startsWith('"') && val.endsWith('"')) {
+                val = val.slice(1, -1).replace(/""/g, '"');
+            }
+            return val;
+        });
+    };
+
+    const headers = parseCSVRow(lines[0]);
     // Relaxed check: itemCode is optional if Category/Brand is present to generate it
     if(!headers.includes('itemCode') && !headers.includes('brand')) {
         return alert("Error: CSV must have either 'itemCode' OR 'brand' (for auto-generation).");
@@ -3877,7 +3945,7 @@ window.processCSVImport = async () => {
         if (!lines[i].trim()) continue;
         
         // Basic CSV parsing
-        const values = lines[i].split(',').map(v => v.trim());
+        const values = parseCSVRow(lines[i]);
         const data = {};
         const specs = {};
         const specList = [];
@@ -4785,5 +4853,187 @@ window.exportProjectDashboardCSV = async () => {
     link.href = URL.createObjectURL(blob);
     link.download = `project_dashboard_export_${new Date().toISOString().slice(0,10)}.csv`;
     link.click();
+    toggleLoading(false);
+}
+
+// --- AUDIT LOGS LOGIC ---
+async function openAuditLogModal() {
+    const tbody = document.getElementById('auditLogBody');
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3"><div class="spinner-border spinner-border-sm text-primary"></div> Loading logs...</td></tr>';
+    
+    new bootstrap.Modal(document.getElementById('auditLogModal')).show();
+
+    try {
+        const q = query(collection(db, "audit_logs"), orderBy("date", "desc"), limit(100));
+        const snap = await getDocs(q);
+        
+        tbody.innerHTML = '';
+        if(snap.empty) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No audit logs found.</td></tr>';
+            return;
+        }
+
+        snap.forEach(d => {
+            const log = d.data();
+            const date = log.date ? new Date(log.date.seconds * 1000).toLocaleString() : '-';
+            const changesHtml = log.changes.map(c => `<div class="badge bg-warning text-dark border fw-normal mb-1">${c}</div>`).join('<br>');
+            
+            tbody.innerHTML += `
+                <tr>
+                    <td class="text-nowrap small text-muted">${date}</td>
+                    <td>
+                        <div class="fw-bold small">${log.itemCode}</div>
+                        <div class="small text-muted">${log.itemName}</div>
+                    </td>
+                    <td>${changesHtml}</td>
+                    <td class="small text-primary">${log.user}</td>
+                </tr>
+            `;
+        });
+    } catch(e) {
+        console.error(e);
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-danger py-3">Error loading logs.</td></tr>';
+    }
+}
+
+function exportAuditLogsCSV() {
+    const rows = [];
+    rows.push(['Date', 'Item Code', 'Item Name', 'Changes', 'User']);
+    
+    const trs = document.querySelectorAll('#auditLogBody tr');
+    trs.forEach(tr => {
+        const cols = tr.querySelectorAll('td');
+        if(cols.length < 4) return; // Skip empty/loading rows
+        
+        const date = cols[0].innerText;
+        const code = cols[1].querySelector('.fw-bold').innerText;
+        const name = cols[1].querySelector('.text-muted').innerText;
+        const changes = Array.from(cols[2].querySelectorAll('.badge')).map(b => b.innerText).join('; ');
+        const user = cols[3].innerText;
+        
+        rows.push([`"${date}"`, `"${code}"`, `"${name}"`, `"${changes}"`, `"${user}"`]);
+    });
+
+    const csvContent = rows.map(e => e.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `finance_audit_logs_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+}
+
+// --- FINANCE AUDIT REPORT LOGIC ---
+window.openFinanceAuditModal = () => {
+    // Set default dates (First day of month to Today)
+    const today = new Date();
+    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+    document.getElementById('auditStartDate').value = firstDay.toISOString().split('T')[0];
+    document.getElementById('auditEndDate').value = today.toISOString().split('T')[0];
+    
+    // Clear previous results
+    document.getElementById('auditSupplierBody').innerHTML = '<tr><td colspan="6" class="text-center text-muted">Select dates and click Generate</td></tr>';
+    document.getElementById('auditProjectBody').innerHTML = '<tr><td colspan="6" class="text-center text-muted">Select dates and click Generate</td></tr>';
+    document.getElementById('auditDiscrepancyBody').innerHTML = '<tr><td colspan="7" class="text-center text-muted">Select dates and click Generate</td></tr>';
+    document.getElementById('auditSupplierTotal').innerText = '0';
+    document.getElementById('auditProjectTotal').innerText = '0';
+    document.getElementById('auditDiscrepancyTotal').innerText = '0';
+
+    new bootstrap.Modal(document.getElementById('financeAuditModal')).show();
+}
+
+window.runFinanceAudit = async () => {
+    const startStr = document.getElementById('auditStartDate').value;
+    const endStr = document.getElementById('auditEndDate').value;
+    if(!startStr || !endStr) return alert("Please select a date range.");
+
+    const startDate = new Date(startStr);
+    const endDate = new Date(endStr);
+    endDate.setHours(23, 59, 59, 999);
+
+    toggleLoading(true);
+    try {
+        // 1. Fetch Transactions (In/Out)
+        const qTrans = query(collection(db, "transactions"), where("date", ">=", startDate), where("date", "<=", endDate));
+        const snapTrans = await getDocs(qTrans);
+
+        // 2. Fetch Audit Logs (Adjustments)
+        const qLogs = query(collection(db, "audit_logs"), where("date", ">=", startDate), where("date", "<=", endDate));
+        const snapLogs = await getDocs(qLogs);
+
+        const supplierRows = [];
+        const projectRows = [];
+        const discrepancyRows = [];
+        let totalSupplier = 0;
+        let totalProject = 0;
+        let totalDiscrepancy = 0;
+
+        // Process Transactions
+        snapTrans.forEach(d => {
+            const t = d.data();
+            const item = inventory.find(i => i.id === t.itemId);
+            const cost = item ? (item.costPrice || 0) : 0;
+            const total = (t.qty || 0) * cost;
+            const date = t.date ? new Date(t.date.seconds * 1000).toLocaleDateString() : '-';
+
+            if (t.type === 'in' && t.subType === 'receipt') {
+                totalSupplier += total;
+                supplierRows.push(`<tr><td>${date}</td><td>${t.party}</td><td>${t.itemName}</td><td class="text-center">${t.qty}</td><td class="text-end">${cost.toLocaleString()}</td><td class="text-end fw-bold">${total.toLocaleString()}</td></tr>`);
+            } else if (t.type === 'out' && t.subType === 'request') {
+                totalProject += total;
+                projectRows.push(`<tr><td>${date}</td><td>${t.party}</td><td>${t.itemName}</td><td class="text-center">${t.qty}</td><td class="text-end">${cost.toLocaleString()}</td><td class="text-end fw-bold">${total.toLocaleString()}</td></tr>`);
+            }
+        });
+
+        // Process Audit Logs (Manual Adjustments)
+        snapLogs.forEach(d => {
+            const log = d.data();
+            const date = log.date ? new Date(log.date.seconds * 1000).toLocaleString() : '-';
+            
+            // Look for "Manual Bal" change
+            log.changes.forEach(change => {
+                if (change.includes("Manual Bal")) {
+                    // Parse "Manual Bal: 10 -> 12"
+                    const match = change.match(/Manual Bal: ([\d.-]+) -> ([\d.-]+)/);
+                    if (match) {
+                        const oldVal = parseFloat(match[1]);
+                        const newVal = parseFloat(match[2]);
+                        const diff = newVal - oldVal;
+                        
+                        // Find item cost
+                        const item = inventory.find(i => i.itemCode === log.itemCode); // Try by code if ID fails or use log.itemId
+                        const cost = item ? (item.costPrice || 0) : 0;
+                        const impact = diff * cost;
+                        
+                        totalDiscrepancy += impact;
+                        const colorClass = impact >= 0 ? 'text-success' : 'text-danger';
+                        
+                        discrepancyRows.push(`
+                            <tr>
+                                <td>${date}</td>
+                                <td>${log.itemName}</td>
+                                <td>${oldVal} <i class="fas fa-arrow-right small mx-1"></i> ${newVal}</td>
+                                <td class="text-center fw-bold ${diff >= 0 ? 'text-success' : 'text-danger'}">${diff > 0 ? '+' : ''}${diff}</td>
+                                <td class="text-end">${cost.toLocaleString()}</td>
+                                <td class="text-end fw-bold ${colorClass}">${impact.toLocaleString()}</td>
+                                <td class="small text-muted">${log.user}</td>
+                            </tr>
+                        `);
+                    }
+                }
+            });
+        });
+
+        document.getElementById('auditSupplierBody').innerHTML = supplierRows.length ? supplierRows.join('') : '<tr><td colspan="6" class="text-center text-muted">No receipts found in this period.</td></tr>';
+        document.getElementById('auditProjectBody').innerHTML = projectRows.length ? projectRows.join('') : '<tr><td colspan="6" class="text-center text-muted">No usage found in this period.</td></tr>';
+        document.getElementById('auditDiscrepancyBody').innerHTML = discrepancyRows.length ? discrepancyRows.join('') : '<tr><td colspan="7" class="text-center text-muted">No manual adjustments found.</td></tr>';
+
+        document.getElementById('auditSupplierTotal').innerText = totalSupplier.toLocaleString() + " MMK";
+        document.getElementById('auditProjectTotal').innerText = totalProject.toLocaleString() + " MMK";
+        document.getElementById('auditDiscrepancyTotal').innerText = totalDiscrepancy.toLocaleString() + " MMK";
+
+    } catch(e) {
+        console.error(e);
+        alert("Error generating audit report: " + e.message);
+    }
     toggleLoading(false);
 }
