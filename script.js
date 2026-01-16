@@ -3803,16 +3803,37 @@ window.exportInventoryCSV = () => {
     
     // Define Columns
     const cols = ['itemCode', 'category', 'brand', 'model', 'spec', 'unit', 'balance', 'costPrice', 'sellingPrice', 'remark'];
-    let csvContent = cols.join(",") + "\n";
+    
+    // Dynamic Columns
+    let dynamicKeys = [];
+    if (currentCategoryFilter !== 'All' && categoryFieldConfig[currentCategoryFilter]) {
+        dynamicKeys = categoryFieldConfig[currentCategoryFilter].map(f => f.id);
+    } else {
+        const allKeys = new Set();
+        Object.values(categoryFieldConfig).forEach(fields => {
+            fields.forEach(f => allKeys.add(f.id));
+        });
+        dynamicKeys = Array.from(allKeys).sort();
+    }
+
+    let header = [...cols, ...dynamicKeys];
+    let csvContent = header.join(",") + "\n";
 
     itemsToExport.forEach(item => {
         const row = cols.map(col => {
             let val = item[col] === undefined || item[col] === null ? '' : item[col];
-            // Escape quotes and handle commas
             val = String(val).replace(/"/g, '""');
-            if (val.includes(',')) val = `""`;
+            if (val.includes(',') || val.includes('\n')) val = `"${val}"`;
             return val;
         });
+
+        dynamicKeys.forEach(key => {
+            let val = (item.specs && item.specs[key]) ? item.specs[key] : '';
+            val = String(val).replace(/"/g, '""');
+            if (val.includes(',') || val.includes('\n')) val = `"${val}"`;
+            row.push(val);
+        });
+
         csvContent += row.join(",") + "\n";
     });
 
@@ -3961,8 +3982,15 @@ window.downloadCsvTemplate = () => {
             example.push(f.placeholder.replace('e.g. ', ''));
         });
     } else {
-        headers.push('spec_detail');
-        example.push('General Spec');
+        // Include ALL possible spec fields for mixed import
+        const allKeys = new Set();
+        Object.values(categoryFieldConfig).forEach(fields => {
+            fields.forEach(f => allKeys.add(f.id));
+        });
+        Array.from(allKeys).sort().forEach(key => {
+            headers.push(key);
+            example.push('');
+        });
     }
 
     const csvContent = headers.join(",") + "\n" + example.join(",");
