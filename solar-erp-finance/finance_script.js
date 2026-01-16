@@ -396,6 +396,7 @@ async function loadProjects() {
                     <td>${(p.contractValue||0).toLocaleString()}</td>
                     <td><span class="badge bg-info text-dark">${p.status}</span></td>
                     <td class="fw-bold ${profitColor}">${profit.toLocaleString()}</td>
+                    <td class="text-end"><button class="btn btn-sm btn-outline-primary" onclick="openProjectModal('${p.id}')">Edit</button></td>
                 </tr>`;
         }
         if(select && p.status === 'Active') {
@@ -404,22 +405,44 @@ async function loadProjects() {
     });
 }
 
-function openProjectModal() {
-    document.getElementById('projId').value = 'JOB-' + new Date().getFullYear() + '-';
+function openProjectModal(id = null) {
+    document.getElementById('projectIdHidden').value = id || '';
+    if (id) {
+        const p = projectList.find(x => x.id === id);
+        document.getElementById('projId').value = p.jobId;
+        document.getElementById('projClient').value = p.clientName;
+        document.getElementById('projValue').value = p.contractValue;
+        document.getElementById('projDate').value = p.startDate;
+        document.getElementById('projStatus').value = p.status;
+        document.querySelector('#projectModal .modal-title').innerText = "Edit Project";
+    } else {
+        document.getElementById('projId').value = 'JOB-' + new Date().getFullYear() + '-';
+        document.getElementById('projClient').value = '';
+        document.getElementById('projValue').value = '';
+        document.getElementById('projDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('projStatus').value = 'Active';
+        document.querySelector('#projectModal .modal-title').innerText = "New Project";
+    }
     new bootstrap.Modal(document.getElementById('projectModal')).show();
 }
 
 async function saveProject() {
+    const id = document.getElementById('projectIdHidden').value;
     const data = {
         jobId: document.getElementById('projId').value,
         clientName: document.getElementById('projClient').value,
         contractValue: parseFloat(document.getElementById('projValue').value) || 0,
         startDate: document.getElementById('projDate').value,
-        status: document.getElementById('projStatus').value,
-        totalExpenses: 0,
-        createdAt: serverTimestamp()
+        status: document.getElementById('projStatus').value
     };
-    await addDoc(collection(db, "projects"), data);
+    
+    if (id) {
+        await updateDoc(doc(db, "projects", id), data);
+    } else {
+        data.totalExpenses = 0;
+        data.createdAt = serverTimestamp();
+        await addDoc(collection(db, "projects"), data);
+    }
     bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
     loadProjects();
 }

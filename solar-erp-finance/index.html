@@ -296,7 +296,7 @@
                 <div class="card">
                     <div class="table-responsive">
                         <table class="table table-hover align-middle">
-                            <thead class="table-light"><tr><th>Job ID</th><th>Client</th><th>Start Date</th><th>Contract Value</th><th>Status</th><th>Net Profit</th></tr></thead>
+                            <thead class="table-light"><tr><th>Job ID</th><th>Client</th><th>Start Date</th><th>Contract Value</th><th>Status</th><th>Net Profit</th><th class="text-end">Action</th></tr></thead>
                             <tbody id="projectTableBody"></tbody>
                         </table>
                     </div>
@@ -488,6 +488,7 @@
         <div class="modal-content">
             <div class="modal-header"><h5 class="modal-title">New Project</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
             <div class="modal-body">
+                <input type="hidden" id="projectIdHidden">
                 <div class="mb-2"><label class="small fw-bold">Job Order ID</label><input type="text" id="projId" class="form-control" placeholder="JOB-2026-..."></div>
                 <div class="mb-2"><label class="small fw-bold">Client Name</label><input type="text" id="projClient" class="form-control"></div>
                 <div class="row g-2 mb-2">
@@ -496,7 +497,7 @@
                 </div>
                 <div class="mb-2"><label class="small fw-bold">Status</label><select id="projStatus" class="form-select"><option>Active</option><option>Completed</option></select></div>
             </div>
-            <div class="modal-footer"><button class="btn btn-primary" onclick="saveProject()">Create Project</button></div>
+            <div class="modal-footer"><button class="btn btn-primary" onclick="saveProject()">Save Project</button></div>
         </div>
     </div>
 </div>
