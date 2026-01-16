@@ -91,6 +91,12 @@ const categoryFieldConfig = {
         { id: 'spec_type', label: 'Type', placeholder: 'e.g. General' },
         { id: 'spec_desc', label: 'Description', placeholder: 'e.g. Consumable' }
     ],
+    'Package': [
+        { id: 'spec_detail', label: 'Package Details', placeholder: 'e.g. Inverter + Battery + Panels' }
+    ],
+    'Fixed Assets': [
+        { id: 'spec_detail', label: 'Asset Details', placeholder: 'e.g. Serial No / Location' }
+    ],
     // Default fallback
     'default': [
         { id: 'spec_detail', label: 'Specification', placeholder: 'General Spec' }
@@ -263,6 +269,7 @@ function setupUIForUser(email, role) {
     
     const isSuperAdmin = role === 'superadmin'; // NEW Check
     const isAdmin = role === 'admin' || isSuperAdmin; // Admin or Super
+    const isProjectManager = role === 'project_manager' || isAdmin; // PM or Admin
     
     const isProcurement = role === 'procurement' || isAdmin;
     const isWarehouse = role === 'warehouse' || isAdmin;
@@ -270,7 +277,7 @@ function setupUIForUser(email, role) {
     const isAccountant = role === 'accountant' || isAdmin; // Legacy
     
     // Hide all special navs first
-    document.querySelectorAll('.auth-admin-only, .auth-finance-access, .auth-procurement-access, .auth-warehouse-access, .auth-restricted-flow, .auth-create-only, .auth-price-only, .auth-superadmin-only, .auth-supplier-access, .auth-customer-access').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.auth-admin-only, .auth-finance-access, .auth-procurement-access, .auth-warehouse-access, .auth-restricted-flow, .auth-create-only, .auth-price-only, .auth-superadmin-only, .auth-supplier-access, .auth-customer-access, .auth-job-access, .auth-usage-access').forEach(el => el.classList.add('hidden'));
 
     // SuperAdmin Access
     if (isSuperAdmin) {
@@ -283,6 +290,12 @@ function setupUIForUser(email, role) {
         document.querySelectorAll('.auth-create-only').forEach(el => el.classList.remove('hidden'));
     }
 
+    // Project Manager Access (Jobs, Projects, Customers)
+    if (isProjectManager) {
+        document.querySelectorAll('.auth-job-access').forEach(el => el.classList.remove('hidden'));
+        document.querySelectorAll('.auth-customer-access').forEach(el => el.classList.remove('hidden'));
+    }
+
     // Procurement Access
     if (isProcurement) {
         document.querySelectorAll('.auth-procurement-access').forEach(el => el.classList.remove('hidden'));
@@ -293,8 +306,13 @@ function setupUIForUser(email, role) {
         document.querySelectorAll('.auth-warehouse-access').forEach(el => el.classList.remove('hidden'));
     }
 
-    // Flow Access (Warehouse + Admin + Accountant + Finance)
-    if (isWarehouse || isFinance || isAccountant) {
+    // Usage Access (Warehouse + Admin + PM)
+    if (isWarehouse || isProjectManager) {
+        document.querySelectorAll('.auth-usage-access').forEach(el => el.classList.remove('hidden'));
+    }
+
+    // Flow Access (Warehouse + Admin + Accountant + Finance + PM)
+    if (isWarehouse || isFinance || isAccountant || isProjectManager) {
         document.querySelectorAll('.auth-restricted-flow').forEach(el => el.classList.remove('hidden'));
     }
 
@@ -4063,7 +4081,7 @@ async function loadUsers() {
     tbody.innerHTML = '';
     snap.forEach(d => {
         const u = d.data();
-        const roleOptions = ['staff', 'admin', 'procurement', 'warehouse', 'finance', 'superadmin'].map(r => 
+        const roleOptions = ['staff', 'admin', 'procurement', 'warehouse', 'finance', 'project_manager', 'superadmin'].map(r => 
             `<option value="" ${u.role === r ? 'selected' : ''}>${r.toUpperCase()}</option>`
         ).join('');
 
